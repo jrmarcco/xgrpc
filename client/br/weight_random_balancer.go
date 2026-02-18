@@ -1,62 +1,106 @@
 package br
 
 import (
+	"maps"
 	"math/rand"
+	"sync"
 
-	"github.com/JrMarcco/easy-grpc/client"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
+
+	"github.com/jrmarcco/xgrpc/client"
 )
 
 var _ base.PickerBuilder = (*WeightRandomBalancerBuilder)(nil)
 
-type WeightRandomBalancerBuilder struct{}
+type WeightRandomBalancerBuilder struct {
+	mu sync.Mutex
+
+	picker *WeightRandomBalancer
+}
 
 func (b *WeightRandomBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
-	nodes := make([]weightRandomNode, 0, len(info.ReadySCs))
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	var totalWeight uint32
+	if b.picker == nil {
+		b.picker = &WeightRandomBalancer{
+			nodes: make(map[string]weightRandomNode, len(info.ReadySCs)),
+		}
+	}
+
+	readySCs := make(map[string]weightRandomNode, len(info.ReadySCs))
 	for cc, ccInfo := range info.ReadySCs {
+		addr := ccInfo.Address.Addr
+		if addr == "" {
+			continue
+		}
 		weight, _ := ccInfo.Address.Attributes.Value(client.AttrNameWeight).(uint32)
-		totalWeight += weight
-
-		nodes = append(nodes, weightRandomNode{
-			cc:     cc,
+		readySCs[addr] = weightRandomNode{
+			sc:     cc,
 			weight: weight,
-		})
+		}
 	}
-	return &WeightRandomBalancer{
-		nodes:       nodes,
-		totalWeight: totalWeight,
-	}
+
+	b.picker.syncReadySCs(readySCs)
+	return b.picker
 }
 
 var _ balancer.Picker = (*WeightRandomBalancer)(nil)
 
 type WeightRandomBalancer struct {
-	nodes       []weightRandomNode
+	mu sync.RWMutex
+
+	list        []weightRandomNode
+	nodes       map[string]weightRandomNode
 	totalWeight uint32
 }
 
-func (p *WeightRandomBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	if len(p.nodes) == 0 {
+func (b *WeightRandomBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+	b.mu.RLock()
+	list := b.list
+	totalWeight := b.totalWeight
+	b.mu.RUnlock()
+
+	if len(list) == 0 || totalWeight == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
-	target := rand.Intn(int(p.totalWeight) + 1)
-	for _, node := range p.nodes {
+	//nolint:gosec // 这里使用 rand.IntN 是安全的。
+	target := rand.Intn(int(totalWeight))
+	for _, node := range list {
 		target -= int(node.weight)
 		if target < 0 {
 			return balancer.PickResult{
-				SubConn: node.cc,
+				SubConn: node.sc,
 				Done:    func(_ balancer.DoneInfo) {},
 			}, nil
 		}
 	}
-	panic("[easy-grpc] unreachable")
+	panic("[weight-random-balancer] unreachable")
+}
+
+func (b *WeightRandomBalancer) syncReadySCs(readySCs map[string]weightRandomNode) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for addr := range b.nodes {
+		if _, ok := readySCs[addr]; ok {
+			continue
+		}
+		delete(b.nodes, addr)
+	}
+	maps.Copy(b.nodes, readySCs)
+
+	b.totalWeight = 0
+	b.list = b.list[:0]
+	for _, node := range b.nodes {
+		b.totalWeight += node.weight
+		b.list = append(b.list, node)
+	}
 }
 
 type weightRandomNode struct {
-	cc     balancer.SubConn
+	sc     balancer.SubConn
 	weight uint32
 }

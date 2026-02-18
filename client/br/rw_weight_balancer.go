@@ -6,102 +6,93 @@ import (
 	"io"
 	"sync"
 
-	"github.com/JrMarcco/easy-grpc/client"
-	"github.com/JrMarcco/easy-kit/slice"
+	"github.com/jrmarcco/jit/xslice"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
+
+	"github.com/jrmarcco/xgrpc/client"
 )
 
 var _ base.PickerBuilder = (*RwWeightBalancerBuilder)(nil)
 
 type RwWeightBalancerBuilder struct {
-	mu        sync.RWMutex
-	nodeCache map[string]*rwWeightServiceNode
+	mu sync.Mutex
+
+	picker *RwWeightBalancer
 }
 
 func (b *RwWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
-	nodes := make([]*rwWeightServiceNode, 0, len(info.ReadySCs))
-	ccMap := make(map[string]struct{})
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	for cc, ccInfo := range info.ReadySCs {
-		readWeight, ok := ccInfo.Address.Attributes.Value(client.AttrNameReadWeight).(uint32)
-		if !ok {
-			continue
-		}
-		writeWeight, ok := ccInfo.Address.Attributes.Value(client.AttrNameWriteWeight).(uint32)
-		if !ok {
-			continue
-		}
-		groupName, ok := ccInfo.Address.Attributes.Value(client.AttrNameGroup).(string)
-		if !ok {
-			continue
-		}
-		nodeName, ok := ccInfo.Address.Attributes.Value(client.AttrNameNode).(string)
-		if !ok {
-			continue
-		}
-		ccMap[nodeName] = struct{}{}
-
-		if cacheNode, ok := b.nodeCache[nodeName]; ok {
-			// 当前节点存在缓存中，更新连接信息、组信息
-			cacheNode.mu.Lock()
-			cacheNode.group = groupName
-			cacheNode.mu.Unlock()
-
-			if cacheNode.readWeight != readWeight || cacheNode.writeWeight != writeWeight {
-				// 权重发生变化，更新权重
-				cacheNode = newRwWeightServiceNode(cc, readWeight, writeWeight, groupName)
-				b.nodeCache[nodeName] = cacheNode
-			}
-			nodes = append(nodes, cacheNode)
-		} else {
-			newNode := newRwWeightServiceNode(cc, readWeight, writeWeight, groupName)
-			b.nodeCache[nodeName] = newNode
-			nodes = append(nodes, newNode)
+	if b.picker == nil {
+		b.picker = &RwWeightBalancer{
+			nodes: make(map[string]*rwWeightServiceNode, len(info.ReadySCs)),
 		}
 	}
 
-	// 从缓存中清除已经不存在的节点
-	for key := range b.nodeCache {
-		if _, ok := ccMap[key]; !ok {
-			delete(b.nodeCache, key)
+	readySCs := make(map[string]*rwWeightServiceNode, len(info.ReadySCs))
+	for sc, scInfo := range info.ReadySCs {
+		addr := scInfo.Address.Addr
+		if addr == "" {
+			continue
 		}
+		readWeight, ok := scInfo.Address.Attributes.Value(client.AttrNameReadWeight).(uint32)
+		if !ok {
+			continue
+		}
+		writeWeight, ok := scInfo.Address.Attributes.Value(client.AttrNameWriteWeight).(uint32)
+		if !ok {
+			continue
+		}
+		groupName, ok := scInfo.Address.Attributes.Value(client.AttrNameGroup).(string)
+		if !ok {
+			continue
+		}
+		nodeName, ok := scInfo.Address.Attributes.Value(client.AttrNameNode).(string)
+		if !ok {
+			continue
+		}
+		readySCs[nodeName] = newRwWeightServiceNode(sc, readWeight, writeWeight, groupName)
 	}
 
-	return &RwWeightBalancer{nodes: nodes}
+	b.picker.syncReadySCs(readySCs)
+	return b.picker
 }
 
 func NewRwWeightBalancerBuilder() *RwWeightBalancerBuilder {
-	return &RwWeightBalancerBuilder{
-		nodeCache: make(map[string]*rwWeightServiceNode),
-	}
+	return &RwWeightBalancerBuilder{}
 }
 
 var _ balancer.Picker = (*RwWeightBalancer)(nil)
 
 type RwWeightBalancer struct {
-	nodes []*rwWeightServiceNode
+	mu sync.RWMutex
+
+	list  []*rwWeightServiceNode
+	nodes map[string]*rwWeightServiceNode
 }
 
-func (p *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	if len(p.nodes) == 0 {
+func (b *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	b.mu.RLock()
+	nodes := b.list
+	b.mu.RUnlock()
+
+	if len(nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
-	// 获取候选节点
+	// 获取候选节点。
 	ctx := info.Ctx
 	group, hasGroup := client.ContextGroup(ctx)
 
 	var candidateNodes []*rwWeightServiceNode
 	if !hasGroup {
-		// ctx 中没有 group 字段，不进行筛选，返回所有节点
-		candidateNodes = p.nodes
+		// ctx 中没有 group 字段，不进行筛选，返回所有节点。
+		candidateNodes = nodes
 	} else {
-		// ctx 中有 group 字段，进行筛选
-		candidateNodes = slice.FilterMap(p.nodes, func(_ int, src *rwWeightServiceNode) (*rwWeightServiceNode, bool) {
+		// ctx 中有 group 字段，进行筛选。
+		candidateNodes = xslice.FilterMap(nodes, func(_ int, src *rwWeightServiceNode) (*rwWeightServiceNode, bool) {
 			src.mu.RLock()
 			nodeGroup := src.group
 			src.mu.RUnlock()
@@ -117,9 +108,9 @@ func (p *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, er
 	var totalWeight uint32
 	var selectedNode *rwWeightServiceNode
 
-	isWriteReq := p.isWriteReq(ctx)
+	isWriteReq := b.isWriteReq(ctx)
 
-	// 权重计算
+	// 权重计算。
 	for _, node := range candidateNodes {
 		node.mu.Lock()
 		if isWriteReq {
@@ -153,39 +144,81 @@ func (p *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, er
 	selectedNode.mu.Unlock()
 
 	return balancer.PickResult{
-		SubConn: selectedNode.cc,
+		SubConn: selectedNode.sc,
 		Done: func(info balancer.DoneInfo) {
-			selectedNode.mu.Lock()
-			defer selectedNode.mu.Unlock()
-
-			isDecrementErr := info.Err != nil && (errors.Is(info.Err, context.DeadlineExceeded) || errors.Is(info.Err, io.EOF))
-			const twice = 2
-			if isWriteReq {
-				if info.Err == nil {
-					selectedNode.efficientWriteWeight++
-					selectedNode.currentWriteWeight = max(selectedNode.efficientWriteWeight, selectedNode.writeWeight*twice)
-					return
-				}
-				if isDecrementErr && selectedNode.efficientWriteWeight > 1 {
-					selectedNode.efficientWriteWeight--
-				}
-				return
-			}
-
-			if info.Err == nil {
-				selectedNode.efficientReadWeight++
-				selectedNode.currentReadWeight = max(selectedNode.efficientReadWeight, selectedNode.readWeight*twice)
-				return
-			}
-
-			if isDecrementErr && selectedNode.efficientReadWeight > 1 {
-				selectedNode.efficientReadWeight--
-			}
+			b.recalculateWeight(isWriteReq, selectedNode, info)
 		},
 	}, nil
 }
 
-func (p *RwWeightBalancer) isWriteReq(ctx context.Context) bool {
+// recalculateWeight 重新计算被选中节点的权重。
+func (b *RwWeightBalancer) recalculateWeight(isWriteReq bool, node *rwWeightServiceNode, info balancer.DoneInfo) {
+	node.mu.Lock()
+	defer node.mu.Unlock()
+
+	isDecrementErr := info.Err != nil && (errors.Is(info.Err, context.DeadlineExceeded) || errors.Is(info.Err, io.EOF))
+	const twice = 2
+	if isWriteReq {
+		if info.Err == nil {
+			node.efficientWriteWeight++
+			node.currentWriteWeight = max(node.efficientWriteWeight, node.writeWeight*twice)
+			return
+		}
+		if isDecrementErr && node.efficientWriteWeight > 1 {
+			node.efficientWriteWeight--
+		}
+		return
+	}
+
+	if info.Err == nil {
+		node.efficientReadWeight++
+		node.currentReadWeight = max(node.efficientReadWeight, node.readWeight*twice)
+		return
+	}
+
+	if isDecrementErr && node.efficientReadWeight > 1 {
+		node.efficientReadWeight--
+	}
+}
+
+func (b *RwWeightBalancer) syncReadySCs(readySCs map[string]*rwWeightServiceNode) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for nodeName := range b.nodes {
+		if _, ok := readySCs[nodeName]; ok {
+			continue
+		}
+		delete(b.nodes, nodeName)
+	}
+
+	for nodeName, nextNode := range readySCs {
+		oldNode, ok := b.nodes[nodeName]
+		if !ok {
+			b.nodes[nodeName] = nextNode
+			continue
+		}
+
+		oldNode.mu.Lock()
+		weightChanged := oldNode.readWeight != nextNode.readWeight || oldNode.writeWeight != nextNode.writeWeight
+		if !weightChanged {
+			oldNode.sc = nextNode.sc
+			oldNode.group = nextNode.group
+			oldNode.mu.Unlock()
+			continue
+		}
+		oldNode.mu.Unlock()
+
+		b.nodes[nodeName] = nextNode
+	}
+
+	b.list = b.list[:0]
+	for _, node := range b.nodes {
+		b.list = append(b.list, node)
+	}
+}
+
+func (b *RwWeightBalancer) isWriteReq(ctx context.Context) bool {
 	if reqType, ok := client.ContextReqType(ctx); ok {
 		return reqType == 1
 	}
@@ -195,7 +228,8 @@ func (p *RwWeightBalancer) isWriteReq(ctx context.Context) bool {
 type rwWeightServiceNode struct {
 	mu sync.RWMutex
 
-	cc                  balancer.SubConn
+	sc balancer.SubConn
+
 	readWeight          uint32
 	currentReadWeight   uint32
 	efficientReadWeight uint32
@@ -207,15 +241,18 @@ type rwWeightServiceNode struct {
 	group string
 }
 
-func newRwWeightServiceNode(cc balancer.SubConn, readWeight uint32, writeWeight uint32, group string) *rwWeightServiceNode {
+func newRwWeightServiceNode(sc balancer.SubConn, readWeight, writeWeight uint32, group string) *rwWeightServiceNode {
 	return &rwWeightServiceNode{
-		cc:                   cc,
-		readWeight:           readWeight,
-		currentReadWeight:    readWeight,
-		efficientReadWeight:  readWeight,
+		sc: sc,
+
+		readWeight:          readWeight,
+		currentReadWeight:   readWeight,
+		efficientReadWeight: readWeight,
+
 		writeWeight:          writeWeight,
 		currentWriteWeight:   writeWeight,
 		efficientWriteWeight: writeWeight,
-		group:                group,
+
+		group: group,
 	}
 }

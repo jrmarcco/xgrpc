@@ -6,46 +6,58 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/JrMarcco/easy-grpc/internal/errs"
-	"github.com/JrMarcco/easy-grpc/registry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+
+	"github.com/jrmarcco/xgrpc/internal/errs"
+	"github.com/jrmarcco/xgrpc/register"
 )
 
 type Builder struct {
 	etcdClient *clientv3.Client
 
 	keyPrefix string
-	// 租约 ttl，默认 30s
+	// 租约 ttl ( 默认 30s )。
 	//
-	// | cluster scale | recommended lease TTL (seconds) |
-	// |    < 50       |            30                   |
-	// |    50 ~ 200   |            15                   |
-	// |    > 200      |            10                   |
+	// | cluster scale | recommended lease TTL ( second ) |
+	// |    < 50       |             30                   |
+	// |    50 ~ 200   |             15                   |
+	// |    > 200      |             10                   |
 	//
-	// 集群规模越大续约越频繁的原因是：
-	// 1、服务变更感知时效性要求更高。
-	// 2、减少“僵尸”服务的影响。
-	// 3、防止单点故障影响扩大。
-	// 4、更快的健康检查与剔除。
-	// 5、分摊注册中心压力。
-	//		虽然续约频繁会增加 etcd 的 QPS，但大集群本身对注册中心的压力主要来自服务变更和查询。
-	//		但是通过合理缩短 TTL 和加快续约，可以让 etcd 更及时地维护服务列表，避免因“过期”服务过多导致的查询不准确。
+	// 集群规模越大续约越频繁的原因：
+	//
+	// 	1. 服务变更感知时效性要求更高。
+	// 	2. 减少“僵尸”服务的影响。
+	// 	3. 防止单点故障影响扩大。
+	// 	4. 更快的健康检查与剔除。
+	// 	5. 分摊注册中心压力。
+	//
+	// 虽然续约频繁会增加 etcd 的 QPS，但大集群本身对注册中心的压力主要来自服务变更和查询。
+	// 通过合理缩短 TTL 和加快续约，可以让 etcd 更及时地维护服务列表，避免因过期服务过多导致的查询不准确。
 	leaseTTL int
 }
 
-// LeaseTTL 设置租约 ttl，单位为秒
+func NewBuilder(etcdClient *clientv3.Client) *Builder {
+	return &Builder{
+		etcdClient: etcdClient,
+		keyPrefix:  "xgrpc",
+		leaseTTL:   30,
+	}
+}
+
+// LeaseTTL 设置租约 ttl ( 单位为秒 )。
 func (b *Builder) LeaseTTL(ttl int) *Builder {
 	b.leaseTTL = ttl
 	return b
 }
 
-// KeyPrefix 设置注册服务 key 前缀
+// KeyPrefix 设置注册服务 key 前缀。
 func (b *Builder) KeyPrefix(keyPrefix string) *Builder {
 	b.keyPrefix = keyPrefix
 	return b
 }
 
+// Build 构建注册器。
 func (b *Builder) Build() (*Registry, error) {
 	if b.leaseTTL <= 0 {
 		return nil, errs.ErrInvalidEtcdLeaseTTL
@@ -62,17 +74,8 @@ func (b *Builder) Build() (*Registry, error) {
 	}, nil
 }
 
-func NewBuilder(etcdClient *clientv3.Client) *Builder {
-	return &Builder{
-		etcdClient: etcdClient,
-		keyPrefix:  "easy-grpc",
-		leaseTTL:   30,
-	}
-}
+var _ register.Registry = (*Registry)(nil)
 
-var _ registry.Registry = (*Registry)(nil)
-
-// Registry 基于 etcd 实现的服务注册发现
 type Registry struct {
 	mu sync.Mutex
 
@@ -84,7 +87,7 @@ type Registry struct {
 	watchCancel []context.CancelFunc
 }
 
-func (r *Registry) Register(ctx context.Context, si registry.ServiceInstance) error {
+func (r *Registry) Register(ctx context.Context, si register.ServiceInstance) error {
 	val, err := json.Marshal(si)
 	if err != nil {
 		return err
@@ -93,20 +96,20 @@ func (r *Registry) Register(ctx context.Context, si registry.ServiceInstance) er
 	return err
 }
 
-func (r *Registry) Unregister(ctx context.Context, si registry.ServiceInstance) error {
+func (r *Registry) Unregister(ctx context.Context, si register.ServiceInstance) error {
 	_, err := r.etcdClient.Delete(ctx, r.instanceKey(si))
 	return err
 }
 
-func (r *Registry) ListServices(ctx context.Context, serviceName string) ([]registry.ServiceInstance, error) {
+func (r *Registry) ListServices(ctx context.Context, serviceName string) ([]register.ServiceInstance, error) {
 	resp, err := r.etcdClient.Get(ctx, r.serviceKey(serviceName), clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
 
-	res := make([]registry.ServiceInstance, 0, len(resp.Kvs))
+	res := make([]register.ServiceInstance, 0, len(resp.Kvs))
 	for _, kv := range resp.Kvs {
-		var si registry.ServiceInstance
+		var si register.ServiceInstance
 		if err := json.Unmarshal(kv.Value, &si); err != nil {
 			return nil, err
 		}
@@ -149,7 +152,7 @@ func (r *Registry) serviceKey(serviceName string) string {
 	return fmt.Sprintf("/%s/%s", r.keyPrefix, serviceName)
 }
 
-func (r *Registry) instanceKey(si registry.ServiceInstance) string {
+func (r *Registry) instanceKey(si register.ServiceInstance) string {
 	return fmt.Sprintf("/%s/%s/%s", r.keyPrefix, si.Name, si.Addr)
 }
 

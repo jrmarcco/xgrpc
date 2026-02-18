@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/JrMarcco/easy-kit/xsync"
+	"github.com/jrmarcco/jit/xsync"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/balancer"
@@ -13,7 +13,8 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
-// ManagerBuilder grpc 客户端管理器 builder
+// ManagerBuilder 是 grpc 客户端管理器 builder。
+// 用于构建 grpc 客户端管理器。
 type ManagerBuilder[T any] struct {
 	rb resolver.Builder
 	bb balancer.Builder
@@ -22,6 +23,21 @@ type ManagerBuilder[T any] struct {
 	keepaliveParams keepalive.ClientParameters
 
 	creator func(conn *grpc.ClientConn) T
+}
+
+func NewManagerBuilder[T any](rb resolver.Builder, bb balancer.Builder, creator func(conn *grpc.ClientConn) T) *ManagerBuilder[T] {
+	const defaultPingTimeout = 10 * time.Second
+	return &ManagerBuilder[T]{
+		rb:       rb,
+		bb:       bb,
+		creator:  creator,
+		insecure: false,
+		keepaliveParams: keepalive.ClientParameters{
+			Time:                time.Minute,
+			Timeout:             defaultPingTimeout,
+			PermitWithoutStream: true,
+		},
+	}
 }
 
 func (b *ManagerBuilder[T]) ResolverBuilder(rb resolver.Builder) *ManagerBuilder[T] {
@@ -60,26 +76,13 @@ func (b *ManagerBuilder[T]) Build() *Manager[T] {
 	}
 }
 
-func NewManagerBuilder[T any](rb resolver.Builder, bb balancer.Builder, creator func(conn *grpc.ClientConn) T) *ManagerBuilder[T] {
-	return &ManagerBuilder[T]{
-		rb:       rb,
-		bb:       bb,
-		creator:  creator,
-		insecure: false,
-		keepaliveParams: keepalive.ClientParameters{
-			Time:                time.Minute,
-			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
-		},
-	}
-}
-
 type clientEntry[T any] struct {
 	client T
 	conn   *grpc.ClientConn
 }
 
-// Manager grpc 客户端管理器
+// Manager 是 grpc 客户端管理器。
+// 用于管理 grpc 客户端连接。
 type Manager[T any] struct {
 	sg *singleflight.Group
 
@@ -94,6 +97,7 @@ type Manager[T any] struct {
 	creator func(conn *grpc.ClientConn) T
 }
 
+// Get 获取指定服务名的客户端。
 func (m *Manager[T]) Get(serviceName string) (T, error) {
 	if entry, loaded := m.clients.Load(serviceName); loaded {
 		return entry.client, nil
@@ -102,7 +106,7 @@ func (m *Manager[T]) Get(serviceName string) (T, error) {
 	client, err, _ := m.sg.Do(serviceName, func() (any, error) {
 		cc, err := m.dial(serviceName)
 		if err != nil {
-			return nil, fmt.Errorf("[easy-grpc] failed to create grpc client connection for service %s: %v", serviceName, err)
+			return nil, fmt.Errorf("[client-manager] failed to create grpc client connection for service %s: %w", serviceName, err)
 		}
 
 		client := m.creator(cc)
@@ -120,9 +124,16 @@ func (m *Manager[T]) Get(serviceName string) (T, error) {
 		return zero, err
 	}
 
-	return client.(T), nil
+	res, ok := client.(T)
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("[client-manager] failed to convert client to type T")
+	}
+
+	return res, nil
 }
 
+// dial 拨号连接指定服务。
 func (m *Manager[T]) dial(serviceName string) (*grpc.ClientConn, error) {
 	opts := []grpc.DialOption{
 		grpc.WithResolvers(m.rb),
@@ -144,7 +155,7 @@ func (m *Manager[T]) dial(serviceName string) (*grpc.ClientConn, error) {
 	return grpc.NewClient(addr, opts...)
 }
 
-// Close 关闭指定服务连接
+// Close 关闭指定服务连接。
 func (m *Manager[T]) Close(serviceName string) error {
 	entry, ok := m.clients.LoadAndDelete(serviceName)
 	if !ok {
@@ -159,15 +170,15 @@ func (m *Manager[T]) Close(serviceName string) error {
 	return nil
 }
 
-// CloseAll 关闭所有连接
+// CloseAll 关闭所有连接。
 func (m *Manager[T]) CloseAll() error {
 	var errs []error
 
 	m.clients.Range(func(serviceName string, entry *clientEntry[T]) bool {
-		// 直接关闭连接
+		// 直接关闭连接。
 		if entry.conn != nil {
 			if err := entry.conn.Close(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to close connection for %s: %v", serviceName, err))
+				errs = append(errs, fmt.Errorf("failed to close connection for %s: %w", serviceName, err))
 			}
 		}
 		m.clients.Delete(serviceName)
@@ -175,7 +186,7 @@ func (m *Manager[T]) CloseAll() error {
 	})
 
 	if len(errs) > 0 {
-		return fmt.Errorf("[easy-grpc] errors closing connections: %v", errs)
+		return fmt.Errorf("[client-manager] errors closing connections: %v", errs)
 	}
 	return nil
 }

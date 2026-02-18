@@ -2,6 +2,4 @@ package errs
 
 import "errors"
 
-var (
-	ErrInvalidEtcdLeaseTTL = errors.New("[easy-grpc] etcd lease TTL must be greater than 0")
-)
+var ErrInvalidEtcdLeaseTTL = errors.New("[xgrpc] etcd lease TTL must be greater than 0")

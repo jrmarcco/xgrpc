@@ -1,0 +1,17 @@
+#!/bin/sh
+
+remote=$1
+url=$2
+
+echo >&2 "🔧 trying to push $remote to $url ..."
+
+printf "🔧 running code checks ...\n"
+if ! make lint 2>&1; then
+    echo >&2 "--------------------------------"
+    echo >&2 "🚨 [error] lint checks failed, please fix the errors above and try again"
+    echo >&2 "--------------------------------"
+    exit 1
+fi
+
+echo "✅ [success] code checks passed"
+exit 0

@@ -4,17 +4,25 @@ import (
 	"context"
 	"time"
 
-	"github.com/JrMarcco/easy-grpc/client"
-	"github.com/JrMarcco/easy-grpc/registry"
 	"google.golang.org/grpc/attributes"
 	"google.golang.org/grpc/resolver"
+
+	"github.com/jrmarcco/xgrpc/client"
+	"github.com/jrmarcco/xgrpc/register"
 )
 
 var _ resolver.Builder = (*ResolverBuilder)(nil)
 
 type ResolverBuilder struct {
-	registry registry.Registry
+	registry register.Registry
 	timeout  time.Duration
+}
+
+func NewResolverBuilder(registry register.Registry, timeout time.Duration) *ResolverBuilder {
+	return &ResolverBuilder{
+		registry: registry,
+		timeout:  timeout,
+	}
 }
 
 func (b *ResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) (resolver.Resolver, error) {
@@ -35,17 +43,10 @@ func (b *ResolverBuilder) Scheme() string {
 	return "registry"
 }
 
-func NewResolverBuilder(registry registry.Registry, timeout time.Duration) *ResolverBuilder {
-	return &ResolverBuilder{
-		registry: registry,
-		timeout:  timeout,
-	}
-}
-
 var _ resolver.Resolver = (*Resolver)(nil)
 
 type Resolver struct {
-	registry registry.Registry
+	registry register.Registry
 	timeout  time.Duration
 
 	target resolver.Target

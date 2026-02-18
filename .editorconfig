@@ -18,7 +18,7 @@ max_line_length = 120
 [*.go]
 indent_style = tab
 
-[*.proto]
+[*.{json,proto}]
 tab_width = 2
 indent_size = 2
 

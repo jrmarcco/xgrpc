@@ -1,11 +1,12 @@
-module github.com/JrMarcco/easy-grpc
+module github.com/jrmarcco/xgrpc
 
-go 1.24.5
+go 1.25
 
 require (
-	github.com/JrMarcco/easy-kit v0.0.7
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/jrmarcco/jit v0.0.4
 	go.etcd.io/etcd/client/v3 v3.6.2
+	golang.org/x/sync v0.16.0
 	google.golang.org/grpc v1.73.0
 )
 

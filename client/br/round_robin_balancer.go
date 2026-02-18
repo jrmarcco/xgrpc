@@ -1,6 +1,8 @@
 package br
 
 import (
+	"maps"
+	"sync"
 	"sync/atomic"
 
 	"google.golang.org/grpc/balancer"
@@ -9,42 +11,79 @@ import (
 
 var _ base.PickerBuilder = (*RoundRobinBalancerBuilder)(nil)
 
-type RoundRobinBalancerBuilder struct{}
+type RoundRobinBalancerBuilder struct {
+	mu sync.Mutex
+
+	picker *RoundRobinBalancer
+}
 
 func (b *RoundRobinBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
-	ccs := make([]balancer.SubConn, 0, len(info.ReadySCs))
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	for cc := range info.ReadySCs {
-		ccs = append(ccs, cc)
+	if b.picker == nil {
+		b.picker = &RoundRobinBalancer{
+			nodes: make(map[string]balancer.SubConn, len(info.ReadySCs)),
+		}
 	}
 
-	return &RoundRobinBalancer{
-		ccs:    ccs,
-		index:  0,
-		length: uint64(len(ccs)),
+	readySCs := make(map[string]balancer.SubConn, len(info.ReadySCs))
+	for sc, scInfo := range info.ReadySCs {
+		addr := scInfo.Address.Addr
+		if addr == "" {
+			continue
+		}
+		readySCs[addr] = sc
 	}
+
+	b.picker.syncReadySCs(readySCs)
+	return b.picker
 }
 
 var _ balancer.Picker = (*RoundRobinBalancer)(nil)
 
 type RoundRobinBalancer struct {
-	ccs []balancer.SubConn
+	mu sync.RWMutex
 
-	index  uint64
-	length uint64
+	list  []balancer.SubConn
+	nodes map[string]balancer.SubConn
+
+	index uint64
 }
 
-func (p *RoundRobinBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	if len(p.ccs) == 0 {
+func (b *RoundRobinBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+	b.mu.RLock()
+	list := b.list
+	b.mu.RUnlock()
+
+	if len(list) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
-	index := atomic.AddUint64(&p.index, 1)
+	index := atomic.AddUint64(&b.index, 1)
 
 	// index - 1 是为了从 0 开始。
-	// 这里做不做 -1 没有什么实质性影响，不 -1 也只是第一个节点少参与一次轮询
-	cc := p.ccs[(index-1)%p.length]
+	// 这里做不做 -1 没有什么实质性影响，不 -1 也只是第一个节点少参与一次轮询。
+	sc := list[(index-1)%uint64(len(list))]
 	return balancer.PickResult{
-		SubConn: cc,
+		SubConn: sc,
 		Done:    func(_ balancer.DoneInfo) {},
 	}, nil
+}
+
+func (b *RoundRobinBalancer) syncReadySCs(readySCs map[string]balancer.SubConn) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for addr := range b.nodes {
+		if _, ok := readySCs[addr]; ok {
+			continue
+		}
+		delete(b.nodes, addr)
+	}
+	maps.Copy(b.nodes, readySCs)
+
+	b.list = b.list[:0]
+	for _, node := range b.nodes {
+		b.list = append(b.list, node)
+	}
 }
