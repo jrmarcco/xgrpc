@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
-// ManagerBuilder 是 grpc 客户端管理器 builder。
-// 用于构建 grpc 客户端管理器。
+// ManagerBuilder 是 gRPC 客户端管理器 builder。
+// 用于构建 gRPC 客户端管理器。
 type ManagerBuilder[T any] struct {
 	rb resolver.Builder
 	bb balancer.Builder
@@ -81,8 +81,8 @@ type clientEntry[T any] struct {
 	conn   *grpc.ClientConn
 }
 
-// Manager 是 grpc 客户端管理器。
-// 用于管理 grpc 客户端连接。
+// Manager 是 gRPC 客户端管理器。
+// 用于管理 gRPC 客户端连接。
 type Manager[T any] struct {
 	sg *singleflight.Group
 
@@ -162,7 +162,7 @@ func (m *Manager[T]) Close(serviceName string) error {
 		return nil
 	}
 
-	// 直接关闭连接
+	// 直接关闭连接。
 	if entry.conn != nil {
 		return entry.conn.Close()
 	}
