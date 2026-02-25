@@ -22,6 +22,10 @@ type DynamicWeightBalancerBuilder struct {
 	picker *DynamicWeightBalancer
 }
 
+func NewDynamicWeightBalancerBuilder() *DynamicWeightBalancerBuilder {
+	return &DynamicWeightBalancerBuilder{}
+}
+
 func (b *DynamicWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -39,11 +43,15 @@ func (b *DynamicWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer
 			continue
 		}
 		weight, _ := scInfo.Address.Attributes.Value(client.AttrNameWeight).(uint32)
+		initialWeight := int64(weight)
+		if initialWeight < 1 {
+			initialWeight = 1
+		}
 		readySCs[addr] = &dynamicServiceNode{
 			sc:              sc,
-			weight:          weight,
-			currentWeight:   weight,
-			efficientWeight: weight,
+			weight:          initialWeight,
+			currentWeight:   initialWeight,
+			efficientWeight: initialWeight,
 		}
 	}
 
@@ -62,24 +70,29 @@ type DynamicWeightBalancer struct {
 
 func (p *DynamicWeightBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
 	p.mu.RLock()
-	nodes := p.list
+	nodes := append([]*dynamicServiceNode(nil), p.list...)
 	p.mu.RUnlock()
 
 	if len(nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
-	var totalWeight uint32
 	var selectedNode *dynamicServiceNode
+	var selectedWeight int64
+	var totalWeight int64
+
+	// 计算总权重。
 	for _, node := range nodes {
-		node.mu.RLock()
+		node.mu.Lock()
 		totalWeight += node.efficientWeight
 		node.currentWeight += node.efficientWeight
+		currentWeight := node.currentWeight
+		node.mu.Unlock()
 
-		if selectedNode == nil || selectedNode.currentWeight < node.currentWeight {
+		if selectedNode == nil || selectedWeight < currentWeight {
 			selectedNode = node
+			selectedWeight = currentWeight
 		}
-		node.mu.RUnlock()
 	}
 
 	if selectedNode == nil {
@@ -97,10 +110,8 @@ func (p *DynamicWeightBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, 
 			defer selectedNode.mu.Unlock()
 
 			if info.Err == nil {
-				const twice = 2
-
 				selectedNode.efficientWeight++
-				selectedNode.efficientWeight = max(selectedNode.efficientWeight, selectedNode.weight*twice)
+				selectedNode.efficientWeight = min(selectedNode.efficientWeight, selectedNode.weight)
 				return
 			}
 
@@ -143,13 +154,19 @@ func (p *DynamicWeightBalancer) syncReadySCs(readySCs map[string]*dynamicService
 
 		oldNode.mu.Lock()
 		oldNode.sc = nextNode.sc
-		oldNode.weight = nextNode.weight
+		oldNode.weight = max(nextNode.weight, 1)
+
 		if oldNode.currentWeight == 0 {
 			oldNode.currentWeight = nextNode.currentWeight
 		}
 		if oldNode.efficientWeight == 0 {
 			oldNode.efficientWeight = nextNode.efficientWeight
 		}
+		if oldNode.efficientWeight < 1 {
+			oldNode.efficientWeight = 1
+		}
+
+		oldNode.efficientWeight = min(oldNode.efficientWeight, oldNode.weight)
 		oldNode.mu.Unlock()
 	}
 
@@ -160,10 +177,10 @@ func (p *DynamicWeightBalancer) syncReadySCs(readySCs map[string]*dynamicService
 }
 
 type dynamicServiceNode struct {
-	mu sync.RWMutex
+	mu sync.Mutex
 
 	sc              balancer.SubConn
-	weight          uint32
-	currentWeight   uint32
-	efficientWeight uint32
+	weight          int64
+	currentWeight   int64
+	efficientWeight int64
 }
