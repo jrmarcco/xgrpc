@@ -5,6 +5,8 @@ import (
 	"io"
 )
 
+//go:generate mockgen -source=types.go -destination=mock/register.mock.go -package=registermock -typed Registry,ContextSubscriber
+
 // Registry 是服务注册器，用于服务注册发现。
 type Registry interface {
 	// 注册服务实例。

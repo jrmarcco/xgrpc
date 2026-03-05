@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
-	clientv3 "go.etcd.io/etcd/client/v3"
-
 	"github.com/jrmarcco/xgrpc/register"
 	"github.com/jrmarcco/xgrpc/register/etcd"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // TestRegistryIntegration 演示完整链路：

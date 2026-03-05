@@ -8,10 +8,9 @@ import (
 	"sync"
 
 	"github.com/cespare/xxhash/v2"
+	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
-
-	"github.com/jrmarcco/xgrpc/client"
 )
 
 var _ base.PickerBuilder = (*HashBalancerBuilder)(nil)

@@ -3,9 +3,8 @@ package etcd_test
 import (
 	"log"
 
-	clientv3 "go.etcd.io/etcd/client/v3"
-
 	"github.com/jrmarcco/xgrpc/register/etcd"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // ExampleBuilder_observabilityCallbacks 展示如何接入可选观测回调。

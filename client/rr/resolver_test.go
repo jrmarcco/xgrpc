@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jrmarcco/xgrpc/register"
 	"google.golang.org/grpc/resolver"
 	"google.golang.org/grpc/serviceconfig"
-
-	"github.com/jrmarcco/xgrpc/register"
 )
 
 type fakeRegistry struct {

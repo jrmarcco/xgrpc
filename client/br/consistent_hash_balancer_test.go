@@ -4,11 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/resolver"
-
-	"github.com/jrmarcco/xgrpc/client"
 )
 
 type testSubConn struct {

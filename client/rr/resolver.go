@@ -8,11 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc/attributes"
-	"google.golang.org/grpc/resolver"
-
 	"github.com/jrmarcco/xgrpc/client"
 	"github.com/jrmarcco/xgrpc/register"
+	"google.golang.org/grpc/attributes"
+	"google.golang.org/grpc/resolver"
 )
 
 var _ resolver.Builder = (*ResolverBuilder)(nil)

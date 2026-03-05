@@ -7,11 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
-
 	"github.com/jrmarcco/xgrpc/internal/errs"
 	"github.com/jrmarcco/xgrpc/register"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 type Builder struct {

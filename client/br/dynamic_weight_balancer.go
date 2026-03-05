@@ -6,12 +6,11 @@ import (
 	"io"
 	"sync"
 
+	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	"github.com/jrmarcco/xgrpc/client"
 )
 
 var _ base.PickerBuilder = (*DynamicWeightBalancerBuilder)(nil)
