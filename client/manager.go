@@ -137,6 +137,8 @@ type Manager[T any] struct {
 
 	clients xsync.Map[string, *clientEntry[T]]
 
+	balancerRegistered atomic.Bool
+
 	rb resolver.Builder
 	bb balancer.Builder
 
@@ -220,6 +222,10 @@ func (m *Manager[T]) dial(serviceName string) (*grpc.ClientConn, error) {
 	}
 
 	if m.bb != nil {
+		if !m.balancerRegistered.Load() {
+			balancer.Register(m.bb)
+			m.balancerRegistered.Store(true)
+		}
 		opts = append(opts, grpc.WithDefaultServiceConfig(
 			fmt.Sprintf(`{"loadBalancingPolicy": %q}`, m.bb.Name()),
 		))

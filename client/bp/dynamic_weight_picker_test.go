@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"errors"
@@ -23,7 +23,7 @@ func pickOnce(t *testing.T, p balancer.Picker, doneErr error) {
 	res.Done(balancer.DoneInfo{Err: doneErr})
 }
 
-func getDynamicNode(t *testing.T, picker *DynamicWeightBalancer, addr string) *dynamicServiceNode {
+func getDynamicNode(t *testing.T, picker *DynamicWeightPicker, addr string) *dynamicNode {
 	t.Helper()
 
 	picker.mu.RLock()
@@ -38,12 +38,12 @@ func getDynamicNode(t *testing.T, picker *DynamicWeightBalancer, addr string) *d
 func TestDynamicWeightBalancerRecoverWeightWithUpperBound(t *testing.T) {
 	t.Parallel()
 
-	builder := NewDynamicWeightBalancerBuilder()
+	builder := &dynamicWeightPickerBuilder{}
 	info, _ := buildInfoFromAddrWeights(map[string]uint32{
 		"10.0.0.1:8080": 3,
 	})
 	p := builder.Build(info)
-	picker, ok := p.(*DynamicWeightBalancer)
+	picker, ok := p.(*DynamicWeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -65,12 +65,12 @@ func TestDynamicWeightBalancerRecoverWeightWithUpperBound(t *testing.T) {
 func TestDynamicWeightBalancerDegradeOnErrors(t *testing.T) {
 	t.Parallel()
 
-	builder := NewDynamicWeightBalancerBuilder()
+	builder := &dynamicWeightPickerBuilder{}
 	info, _ := buildInfoFromAddrWeights(map[string]uint32{
 		"10.0.0.1:8081": 3,
 	})
 	p := builder.Build(info)
-	picker, ok := p.(*DynamicWeightBalancer)
+	picker, ok := p.(*DynamicWeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -95,12 +95,12 @@ func TestDynamicWeightBalancerDegradeOnErrors(t *testing.T) {
 func TestDynamicWeightBalancerClampEffectiveWeightOnWeightUpdate(t *testing.T) {
 	t.Parallel()
 
-	builder := NewDynamicWeightBalancerBuilder()
+	builder := &dynamicWeightPickerBuilder{}
 	info, _ := buildInfoFromAddrWeights(map[string]uint32{
 		"10.0.0.1:8080": 10,
 	})
 	p := builder.Build(info)
-	picker, ok := p.(*DynamicWeightBalancer)
+	picker, ok := p.(*DynamicWeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -124,10 +124,10 @@ func TestDynamicWeightBalancerClampEffectiveWeightOnWeightUpdate(t *testing.T) {
 func TestDynamicWeightBalancerDefaultWeightWhenAttributeMissing(t *testing.T) {
 	t.Parallel()
 
-	builder := NewDynamicWeightBalancerBuilder()
+	builder := &dynamicWeightPickerBuilder{}
 	info, _ := buildInfoFromAddrs("10.0.0.1:8080")
 	p := builder.Build(info)
-	picker, ok := p.(*DynamicWeightBalancer)
+	picker, ok := p.(*DynamicWeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}

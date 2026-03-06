@@ -2,6 +2,7 @@ package rr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,6 +17,12 @@ import (
 
 var _ resolver.Builder = (*ResolverBuilder)(nil)
 
+var (
+	ErrRegistryRequired    = errors.New("[resolver] registry is required")
+	ErrServiceNameRequired = errors.New("[resolver] service name is required")
+	ErrInvalidTimeout      = errors.New("[resolver] timeout must be greater than 0")
+)
+
 type ResolverBuilder struct {
 	registry register.Registry
 	timeout  time.Duration
@@ -24,11 +31,15 @@ type ResolverBuilder struct {
 	onResolveUpdated func(serviceName string, instanceCount int)
 }
 
-func NewResolverBuilder(registry register.Registry, timeout time.Duration) *ResolverBuilder {
-	return &ResolverBuilder{
+func NewResolverBuilder(registry register.Registry, timeout time.Duration) (*ResolverBuilder, error) {
+	b := &ResolverBuilder{
 		registry: registry,
 		timeout:  timeout,
 	}
+	if err := b.validate(); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // OnResolveError 设置解析失败回调。
@@ -44,13 +55,22 @@ func (b *ResolverBuilder) OnResolveUpdated(fn func(serviceName string, instanceC
 }
 
 func (b *ResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) (resolver.Resolver, error) {
+	if err := b.validate(); err != nil {
+		return nil, err
+	}
+	serviceName := endpointFromTarget(target)
+	if strings.TrimSpace(serviceName) == "" {
+		return nil, ErrServiceNameRequired
+	}
+
 	watchCtx, watchCancel := context.WithCancel(context.Background())
 	r := &Resolver{
 		registry: b.registry,
 		timeout:  b.timeout,
 
-		target: target,
-		cc:     cc,
+		serviceName: serviceName,
+		target:      target,
+		cc:          cc,
 
 		watchCtx:    watchCtx,
 		watchCancel: watchCancel,
@@ -68,6 +88,16 @@ func (b *ResolverBuilder) Scheme() string {
 	return "registry"
 }
 
+func (b *ResolverBuilder) validate() error {
+	if b.registry == nil {
+		return ErrRegistryRequired
+	}
+	if b.timeout <= 0 {
+		return ErrInvalidTimeout
+	}
+	return nil
+}
+
 var _ resolver.Resolver = (*Resolver)(nil)
 
 // Resolver 是实现 gRPC 的自定义服务发现 Resolver。
@@ -78,8 +108,9 @@ type Resolver struct {
 	registry register.Registry
 	timeout  time.Duration
 
-	target resolver.Target
-	cc     resolver.ClientConn
+	serviceName string
+	target      resolver.Target
+	cc          resolver.ClientConn
 
 	watchCtx    context.Context
 	watchCancel context.CancelFunc
@@ -97,8 +128,7 @@ func (r *Resolver) resolve() {
 	defer r.resolveMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(r.watchCtx, r.timeout)
-	serviceName := r.endpoint()
-	instances, err := r.registry.ListServices(ctx, serviceName)
+	instances, err := r.registry.ListServices(ctx, r.serviceName)
 	cancel()
 
 	if err != nil {
@@ -108,7 +138,7 @@ func (r *Resolver) resolve() {
 		}
 
 		if r.onResolveError != nil {
-			r.onResolveError(serviceName, err)
+			r.onResolveError(r.serviceName, err)
 		}
 		r.cc.ReportError(err)
 		return
@@ -171,7 +201,7 @@ func (r *Resolver) resolve() {
 			return
 		}
 		if r.onResolveError != nil {
-			r.onResolveError(serviceName, err)
+			r.onResolveError(r.serviceName, err)
 		}
 		r.cc.ReportError(err)
 		return
@@ -180,7 +210,7 @@ func (r *Resolver) resolve() {
 	// 更新状态签名。
 	r.lastStateSig = stateSig
 	if r.onResolveUpdated != nil {
-		r.onResolveUpdated(serviceName, len(instances))
+		r.onResolveUpdated(r.serviceName, len(instances))
 	}
 }
 
@@ -189,9 +219,9 @@ func (r *Resolver) resolve() {
 func (r *Resolver) watch() {
 	var events <-chan struct{}
 	if contextSub, ok := r.registry.(register.ContextSubscriber); ok {
-		events = contextSub.SubscribeWithContext(r.watchCtx, r.endpoint())
+		events = contextSub.SubscribeWithContext(r.watchCtx, r.serviceName)
 	} else {
-		events = r.registry.Subscribe(r.endpoint())
+		events = r.registry.Subscribe(r.serviceName)
 	}
 
 	for {
@@ -208,13 +238,17 @@ func (r *Resolver) watch() {
 }
 
 func (r *Resolver) endpoint() string {
-	if ep := r.target.Endpoint(); ep != "" {
+	return endpointFromTarget(r.target)
+}
+
+func endpointFromTarget(target resolver.Target) string {
+	if ep := target.Endpoint(); ep != "" {
 		return ep
 	}
-	if r.target.URL.Path != "" {
-		return strings.TrimPrefix(r.target.URL.Path, "/")
+	if target.URL.Path != "" {
+		return strings.TrimPrefix(target.URL.Path, "/")
 	}
-	return r.target.URL.Host
+	return target.URL.Host
 }
 
 func (r *Resolver) ResolveNow(_ resolver.ResolveNowOptions) {

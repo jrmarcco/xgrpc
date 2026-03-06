@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"context"
@@ -59,11 +59,11 @@ func buildInfoFromRwNodes(nodes []rwNodeSpec) (pi base.PickerBuildInfo, scs map[
 func TestHashBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := &HashBalancerBuilder{}
+	builder := &hashPickerBuilder{}
 	info, _ := buildInfoFromAddrs("10.0.0.1:8080", "10.0.0.2:8080")
 
 	p1 := builder.Build(info)
-	hashPicker, ok := p1.(*HashBalancer)
+	hashPicker, ok := p1.(*HashPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -91,11 +91,11 @@ func TestHashBalancerBuilderSync(t *testing.T) {
 func TestRandomBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := &RandomBalancerBuilder{}
+	builder := &randomPickerBuilder{}
 	info, _ := buildInfoFromAddrs("10.0.0.1:8080", "10.0.0.2:8080")
 
 	p1 := builder.Build(info)
-	_, ok := p1.(*RandomBalancer)
+	_, ok := p1.(*RandomPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -121,14 +121,14 @@ func TestRandomBalancerBuilderSync(t *testing.T) {
 func TestWeightBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := &WeightBalancerBuilder{}
+	builder := &weightPickerBuilder{}
 	info, _ := buildInfoFromAddrWeights(map[string]uint32{
 		"10.0.0.1:8080": 10,
 		"10.0.0.2:8080": 20,
 	})
 
 	p1 := builder.Build(info)
-	weightPicker, ok := p1.(*WeightBalancer)
+	weightPicker, ok := p1.(*WeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -163,11 +163,11 @@ func TestWeightBalancerBuilderSync(t *testing.T) {
 func TestRoundRobinBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := &RoundRobinBalancerBuilder{}
+	builder := &roundRobinPickerBuilder{}
 	info, _ := buildInfoFromAddrs("10.0.0.1:8080", "10.0.0.2:8080")
 
 	p1 := builder.Build(info)
-	picker, ok := p1.(*RoundRobinBalancer)
+	picker, ok := p1.(*RoundRobinPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -200,13 +200,13 @@ func TestRoundRobinBalancerBuilderSync(t *testing.T) {
 func TestWeightRandomBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := &WeightRandomBalancerBuilder{}
+	builder := &weightRandomPickerBuilder{}
 	info, _ := buildInfoFromAddrWeights(map[string]uint32{
 		"10.0.0.1:8080": 10,
 		"10.0.0.2:8080": 20,
 	})
 	p1 := builder.Build(info)
-	picker, ok := p1.(*WeightRandomBalancer)
+	picker, ok := p1.(*WeightRandomPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -240,13 +240,13 @@ func TestWeightRandomBalancerBuilderSync(t *testing.T) {
 func TestDynamicWeightBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := &DynamicWeightBalancerBuilder{}
+	builder := &dynamicWeightPickerBuilder{}
 	info, _ := buildInfoFromAddrWeights(map[string]uint32{
 		"10.0.0.1:8080": 10,
 		"10.0.0.2:8080": 20,
 	})
 	p1 := builder.Build(info)
-	picker, ok := p1.(*DynamicWeightBalancer)
+	picker, ok := p1.(*DynamicWeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -280,13 +280,13 @@ func TestDynamicWeightBalancerBuilderSync(t *testing.T) {
 func TestRwWeightBalancerBuilderSync(t *testing.T) {
 	t.Parallel()
 
-	builder := NewRwWeightBalancerBuilder()
+	builder := &readWriteWeightPickerBuilder{}
 	info, _ := buildInfoFromRwNodes([]rwNodeSpec{
 		{addr: "10.0.0.1:8080", nodeName: "n1", group: "g1", readWeight: 10, writeWeight: 5},
 		{addr: "10.0.0.2:8080", nodeName: "n2", group: "g1", readWeight: 20, writeWeight: 10},
 	})
 	p1 := builder.Build(info)
-	picker, ok := p1.(*RwWeightBalancer)
+	picker, ok := p1.(*ReadWriteWeightPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}

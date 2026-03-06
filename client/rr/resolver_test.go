@@ -81,6 +81,38 @@ func (f *fakeClientConn) reportErrorCalls() int {
 	return f.reportErrCount
 }
 
+func TestNewResolverBuilder_ValidateConfig(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewResolverBuilder(nil, time.Second)
+	if !errors.Is(err, ErrRegistryRequired) {
+		t.Fatalf("expected ErrRegistryRequired, got: %v", err)
+	}
+
+	_, err = NewResolverBuilder(&fakeRegistry{}, 0)
+	if !errors.Is(err, ErrInvalidTimeout) {
+		t.Fatalf("expected ErrInvalidTimeout, got: %v", err)
+	}
+}
+
+func TestResolverBuilderBuild_EmptyServiceName(t *testing.T) {
+	t.Parallel()
+
+	builder, err := NewResolverBuilder(&fakeRegistry{}, time.Second)
+	if err != nil {
+		t.Fatalf("new resolver builder failed: %v", err)
+	}
+
+	_, err = builder.Build(
+		resolver.Target{URL: url.URL{Scheme: "registry"}},
+		&fakeClientConn{},
+		resolver.BuildOptions{},
+	)
+	if !errors.Is(err, ErrServiceNameRequired) {
+		t.Fatalf("expected ErrServiceNameRequired, got: %v", err)
+	}
+}
+
 func TestResolverResolve_SkipDuplicateStateUpdate(t *testing.T) {
 	t.Parallel()
 

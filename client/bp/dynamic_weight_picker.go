@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"context"
@@ -13,29 +13,25 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-var _ base.PickerBuilder = (*DynamicWeightBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*dynamicWeightPickerBuilder)(nil)
 
-type DynamicWeightBalancerBuilder struct {
+type dynamicWeightPickerBuilder struct {
 	mu sync.Mutex
 
-	picker *DynamicWeightBalancer
+	picker *DynamicWeightPicker
 }
 
-func NewDynamicWeightBalancerBuilder() *DynamicWeightBalancerBuilder {
-	return &DynamicWeightBalancerBuilder{}
-}
-
-func (b *DynamicWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *dynamicWeightPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &DynamicWeightBalancer{
-			nodes: make(map[string]*dynamicServiceNode, len(info.ReadySCs)),
+		b.picker = &DynamicWeightPicker{
+			nodes: make(map[string]*dynamicNode, len(info.ReadySCs)),
 		}
 	}
 
-	readySCs := make(map[string]*dynamicServiceNode, len(info.ReadySCs))
+	readySCs := make(map[string]*dynamicNode, len(info.ReadySCs))
 	for sc, scInfo := range info.ReadySCs {
 		addr := scInfo.Address.Addr
 		if addr == "" {
@@ -46,7 +42,7 @@ func (b *DynamicWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer
 		if initialWeight < 1 {
 			initialWeight = 1
 		}
-		readySCs[addr] = &dynamicServiceNode{
+		readySCs[addr] = &dynamicNode{
 			sc:              sc,
 			weight:          initialWeight,
 			currentWeight:   initialWeight,
@@ -58,25 +54,25 @@ func (b *DynamicWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer
 	return b.picker
 }
 
-var _ balancer.Picker = (*DynamicWeightBalancer)(nil)
+var _ balancer.Picker = (*DynamicWeightPicker)(nil)
 
-type DynamicWeightBalancer struct {
+type DynamicWeightPicker struct {
 	mu sync.RWMutex
 
-	nodes map[string]*dynamicServiceNode
-	list  []*dynamicServiceNode
+	nodes map[string]*dynamicNode
+	list  []*dynamicNode
 }
 
-func (p *DynamicWeightBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+func (p *DynamicWeightPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
 	p.mu.RLock()
-	nodes := append([]*dynamicServiceNode(nil), p.list...)
+	nodes := append([]*dynamicNode(nil), p.list...)
 	p.mu.RUnlock()
 
 	if len(nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
-	var selectedNode *dynamicServiceNode
+	var selectedNode *dynamicNode
 	var selectedWeight int64
 	var totalWeight int64
 
@@ -133,7 +129,7 @@ func (p *DynamicWeightBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, 
 	}, nil
 }
 
-func (p *DynamicWeightBalancer) syncReadySCs(readySCs map[string]*dynamicServiceNode) {
+func (p *DynamicWeightPicker) syncReadySCs(readySCs map[string]*dynamicNode) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -175,7 +171,7 @@ func (p *DynamicWeightBalancer) syncReadySCs(readySCs map[string]*dynamicService
 	}
 }
 
-type dynamicServiceNode struct {
+type dynamicNode struct {
 	mu sync.Mutex
 
 	sc              balancer.SubConn

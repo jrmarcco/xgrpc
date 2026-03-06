@@ -14,7 +14,8 @@ import (
 func ExampleResolverBuilder_observabilityCallbacks() {
 	var registry register.Registry
 
-	_ = rr.NewResolverBuilder(registry, 2*time.Second).
+	builder, _ := rr.NewResolverBuilder(registry, 2*time.Second)
+	_ = builder.
 		OnResolveError(func(serviceName string, err error) {
 			log.Printf("resolve error service=%s err=%v", serviceName, err)
 		}).

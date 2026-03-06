@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"context"
@@ -15,33 +15,16 @@ import (
 
 const defaultVirtualNodeCnt = 100
 
-var _ base.PickerBuilder = (*CHBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*consistentHashPickerBuilder)(nil)
 
-type CHBalancerBuilder struct {
+type consistentHashPickerBuilder struct {
 	mu sync.Mutex
 
-	picker         *CHBalancer
+	picker         *ConsistentHashPicker
 	virtualNodeCnt int // 虚拟节点数量
 }
 
-func NewCHBalancerBuilder() *CHBalancerBuilder {
-	return &CHBalancerBuilder{
-		virtualNodeCnt: defaultVirtualNodeCnt,
-	}
-}
-
-func (b *CHBalancerBuilder) VirtualNodeCnt(cnt int) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	// picker 一旦创建，虚拟节点数量即固定，避免运行中修改造成路由突变。
-	if b.picker != nil {
-		return
-	}
-	b.virtualNodeCnt = cnt
-}
-
-func (b *CHBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *consistentHashPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	if b.virtualNodeCnt <= 0 {
 		return base.NewErrPicker(fmt.Errorf("[consistent-hash-balancer] virtual node count must be greater than 0"))
 	}
@@ -50,7 +33,7 @@ func (b *CHBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &CHBalancer{
+		b.picker = &ConsistentHashPicker{
 			scs:            make(map[string]balancer.SubConn, len(info.ReadySCs)),
 			ring:           make([]uint32, 0, b.virtualNodeCnt*len(info.ReadySCs)),
 			nodes:          make([]string, 0, b.virtualNodeCnt*len(info.ReadySCs)),
@@ -71,9 +54,9 @@ func (b *CHBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	return b.picker
 }
 
-var _ balancer.Picker = (*CHBalancer)(nil)
+var _ balancer.Picker = (*ConsistentHashPicker)(nil)
 
-type CHBalancer struct {
+type ConsistentHashPicker struct {
 	mu sync.RWMutex
 
 	scs            map[string]balancer.SubConn // 虚拟节点地址 -> SubConn
@@ -81,11 +64,11 @@ type CHBalancer struct {
 	nodes          []string                    // 与哈希环对应的虚拟节点地址
 	virtualNodeCnt int                         // 虚拟节点数量
 
-	lastSyncStats CHSyncStats
+	lastSyncStats ConsistentHashSyncStats
 }
 
-// CHSyncStats 为最近一次同步快照信息。
-type CHSyncStats struct {
+// ConsistentHashSyncStats 为最近一次同步快照信息。
+type ConsistentHashSyncStats struct {
 	Added   int
 	Removed int
 	Updated int
@@ -94,7 +77,7 @@ type CHSyncStats struct {
 	PhysicalNodeCount int
 }
 
-func (p *CHBalancer) addNodeLocked(sc balancer.SubConn, addr string) {
+func (p *ConsistentHashPicker) addNodeLocked(sc balancer.SubConn, addr string) {
 	p.scs[addr] = sc
 
 	// 为每个物理节点创建多个虚拟节点，虚拟节点在一致性哈希中起到关键的负载均衡作用。
@@ -118,7 +101,7 @@ func (p *CHBalancer) addNodeLocked(sc balancer.SubConn, addr string) {
 	}
 }
 
-func (p *CHBalancer) sortRingLocked() {
+func (p *ConsistentHashPicker) sortRingLocked() {
 	// 索引切片 ( 用于排序)。
 	indices := make([]int, len(p.ring))
 	for i := range indices {
@@ -141,7 +124,7 @@ func (p *CHBalancer) sortRingLocked() {
 	p.nodes = sortedNodes
 }
 
-func (p *CHBalancer) removeNodeLocked(addr string) {
+func (p *ConsistentHashPicker) removeNodeLocked(addr string) {
 	if _, ok := p.scs[addr]; !ok {
 		return
 	}
@@ -161,7 +144,7 @@ func (p *CHBalancer) removeNodeLocked(addr string) {
 	p.nodes = newNodes
 }
 
-func (p *CHBalancer) syncReadySCs(readySCs map[string]balancer.SubConn) {
+func (p *ConsistentHashPicker) syncReadySCs(readySCs map[string]balancer.SubConn) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -194,7 +177,7 @@ func (p *CHBalancer) syncReadySCs(readySCs map[string]balancer.SubConn) {
 		p.sortRingLocked()
 	}
 
-	p.lastSyncStats = CHSyncStats{
+	p.lastSyncStats = ConsistentHashSyncStats{
 		Added:   added,
 		Removed: removed,
 		Updated: updated,
@@ -204,14 +187,14 @@ func (p *CHBalancer) syncReadySCs(readySCs map[string]balancer.SubConn) {
 	}
 }
 
-func (p *CHBalancer) SyncStats() CHSyncStats {
+func (p *ConsistentHashPicker) SyncStats() ConsistentHashSyncStats {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	return p.lastSyncStats
 }
 
-func (p *CHBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+func (p *ConsistentHashPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -240,7 +223,7 @@ func (p *CHBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	}, nil
 }
 
-func (p *CHBalancer) getNodeAddr(hash uint32) string {
+func (p *ConsistentHashPicker) getNodeAddr(hash uint32) string {
 	if len(p.ring) == 0 {
 		return ""
 	}
@@ -257,7 +240,7 @@ func (p *CHBalancer) getNodeAddr(hash uint32) string {
 	return p.nodes[index]
 }
 
-func (p *CHBalancer) hashFromPickInfo(info balancer.PickInfo) (uint32, error) {
+func (p *ConsistentHashPicker) hashFromPickInfo(info balancer.PickInfo) (uint32, error) {
 	var ctx context.Context
 	if ctx = info.Ctx; ctx == nil {
 		return 0, fmt.Errorf("[consistent-hash-balancer] context not found in pick info")
@@ -272,7 +255,7 @@ func (p *CHBalancer) hashFromPickInfo(info balancer.PickInfo) (uint32, error) {
 }
 
 // hash 这里取低 32 位就够了。
-func (p *CHBalancer) hash(src string) uint32 {
+func (p *ConsistentHashPicker) hash(src string) uint32 {
 	hashVal := xxhash.Sum64String(src)
 	return uint32(hashVal)
 }

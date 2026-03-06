@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"context"
@@ -12,25 +12,25 @@ import (
 	"google.golang.org/grpc/balancer/base"
 )
 
-var _ base.PickerBuilder = (*RwWeightBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*readWriteWeightPickerBuilder)(nil)
 
-type RwWeightBalancerBuilder struct {
+type readWriteWeightPickerBuilder struct {
 	mu sync.Mutex
 
-	picker *RwWeightBalancer
+	picker *ReadWriteWeightPicker
 }
 
-func (b *RwWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *readWriteWeightPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &RwWeightBalancer{
-			nodes: make(map[string]*rwWeightServiceNode, len(info.ReadySCs)),
+		b.picker = &ReadWriteWeightPicker{
+			nodes: make(map[string]*readWriteWeightNode, len(info.ReadySCs)),
 		}
 	}
 
-	readySCs := make(map[string]*rwWeightServiceNode, len(info.ReadySCs))
+	readySCs := make(map[string]*readWriteWeightNode, len(info.ReadySCs))
 	for sc, scInfo := range info.ReadySCs {
 		addr := scInfo.Address.Addr
 		if addr == "" {
@@ -52,30 +52,26 @@ func (b *RwWeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Pick
 		if !ok {
 			continue
 		}
-		readySCs[nodeName] = newRwWeightServiceNode(sc, readWeight, writeWeight, groupName)
+		readySCs[nodeName] = newReadWriteWeightNode(sc, readWeight, writeWeight, groupName)
 	}
 
 	b.picker.syncReadySCs(readySCs)
 	return b.picker
 }
 
-func NewRwWeightBalancerBuilder() *RwWeightBalancerBuilder {
-	return &RwWeightBalancerBuilder{}
-}
+var _ balancer.Picker = (*ReadWriteWeightPicker)(nil)
 
-var _ balancer.Picker = (*RwWeightBalancer)(nil)
-
-type RwWeightBalancer struct {
+type ReadWriteWeightPicker struct {
 	mu sync.RWMutex
 
-	list  []*rwWeightServiceNode
-	nodes map[string]*rwWeightServiceNode
+	list  []*readWriteWeightNode
+	nodes map[string]*readWriteWeightNode
 }
 
-func (b *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	b.mu.RLock()
-	nodes := b.list
-	b.mu.RUnlock()
+func (p *ReadWriteWeightPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	p.mu.RLock()
+	nodes := p.list
+	p.mu.RUnlock()
 
 	if len(nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
@@ -85,13 +81,13 @@ func (b *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, er
 	ctx := info.Ctx
 	group, hasGroup := client.ContextGroup(ctx)
 
-	var candidateNodes []*rwWeightServiceNode
+	var candidateNodes []*readWriteWeightNode
 	if !hasGroup {
 		// ctx 中没有 group 字段，不进行筛选，返回所有节点。
 		candidateNodes = nodes
 	} else {
 		// ctx 中有 group 字段，进行筛选。
-		candidateNodes = xslice.FilterMap(nodes, func(_ int, src *rwWeightServiceNode) (*rwWeightServiceNode, bool) {
+		candidateNodes = xslice.FilterMap(nodes, func(_ int, src *readWriteWeightNode) (*readWriteWeightNode, bool) {
 			src.mu.RLock()
 			nodeGroup := src.group
 			src.mu.RUnlock()
@@ -105,9 +101,9 @@ func (b *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, er
 	}
 
 	var totalWeight uint32
-	var selectedNode *rwWeightServiceNode
+	var selectedNode *readWriteWeightNode
 
-	isWriteReq := b.isWriteReq(ctx)
+	isWriteReq := p.isWriteReq(ctx)
 
 	// 权重计算。
 	for _, node := range candidateNodes {
@@ -145,13 +141,13 @@ func (b *RwWeightBalancer) Pick(info balancer.PickInfo) (balancer.PickResult, er
 	return balancer.PickResult{
 		SubConn: selectedNode.sc,
 		Done: func(info balancer.DoneInfo) {
-			b.recalculateWeight(isWriteReq, selectedNode, info)
+			p.recalculateWeight(isWriteReq, selectedNode, info)
 		},
 	}, nil
 }
 
 // recalculateWeight 重新计算被选中节点的权重。
-func (b *RwWeightBalancer) recalculateWeight(isWriteReq bool, node *rwWeightServiceNode, info balancer.DoneInfo) {
+func (p *ReadWriteWeightPicker) recalculateWeight(isWriteReq bool, node *readWriteWeightNode, info balancer.DoneInfo) {
 	node.mu.Lock()
 	defer node.mu.Unlock()
 
@@ -180,21 +176,21 @@ func (b *RwWeightBalancer) recalculateWeight(isWriteReq bool, node *rwWeightServ
 	}
 }
 
-func (b *RwWeightBalancer) syncReadySCs(readySCs map[string]*rwWeightServiceNode) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (p *ReadWriteWeightPicker) syncReadySCs(readySCs map[string]*readWriteWeightNode) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	for nodeName := range b.nodes {
+	for nodeName := range p.nodes {
 		if _, ok := readySCs[nodeName]; ok {
 			continue
 		}
-		delete(b.nodes, nodeName)
+		delete(p.nodes, nodeName)
 	}
 
 	for nodeName, nextNode := range readySCs {
-		oldNode, ok := b.nodes[nodeName]
+		oldNode, ok := p.nodes[nodeName]
 		if !ok {
-			b.nodes[nodeName] = nextNode
+			p.nodes[nodeName] = nextNode
 			continue
 		}
 
@@ -208,23 +204,23 @@ func (b *RwWeightBalancer) syncReadySCs(readySCs map[string]*rwWeightServiceNode
 		}
 		oldNode.mu.Unlock()
 
-		b.nodes[nodeName] = nextNode
+		p.nodes[nodeName] = nextNode
 	}
 
-	b.list = b.list[:0]
-	for _, node := range b.nodes {
-		b.list = append(b.list, node)
+	p.list = p.list[:0]
+	for _, node := range p.nodes {
+		p.list = append(p.list, node)
 	}
 }
 
-func (b *RwWeightBalancer) isWriteReq(ctx context.Context) bool {
+func (p *ReadWriteWeightPicker) isWriteReq(ctx context.Context) bool {
 	if reqType, ok := client.ContextReqType(ctx); ok {
 		return reqType == 1
 	}
 	return false
 }
 
-type rwWeightServiceNode struct {
+type readWriteWeightNode struct {
 	mu sync.RWMutex
 
 	sc balancer.SubConn
@@ -240,8 +236,8 @@ type rwWeightServiceNode struct {
 	group string
 }
 
-func newRwWeightServiceNode(sc balancer.SubConn, readWeight, writeWeight uint32, group string) *rwWeightServiceNode {
-	return &rwWeightServiceNode{
+func newReadWriteWeightNode(sc balancer.SubConn, readWeight, writeWeight uint32, group string) *readWriteWeightNode {
+	return &readWriteWeightNode{
 		sc: sc,
 
 		readWeight:          readWeight,

@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"maps"
@@ -10,20 +10,20 @@ import (
 	"google.golang.org/grpc/balancer/base"
 )
 
-var _ base.PickerBuilder = (*WeightRandomBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*weightRandomPickerBuilder)(nil)
 
-type WeightRandomBalancerBuilder struct {
+type weightRandomPickerBuilder struct {
 	mu sync.Mutex
 
-	picker *WeightRandomBalancer
+	picker *WeightRandomPicker
 }
 
-func (b *WeightRandomBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *weightRandomPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &WeightRandomBalancer{
+		b.picker = &WeightRandomPicker{
 			nodes: make(map[string]weightRandomNode, len(info.ReadySCs)),
 		}
 	}
@@ -45,9 +45,9 @@ func (b *WeightRandomBalancerBuilder) Build(info base.PickerBuildInfo) balancer.
 	return b.picker
 }
 
-var _ balancer.Picker = (*WeightRandomBalancer)(nil)
+var _ balancer.Picker = (*WeightRandomPicker)(nil)
 
-type WeightRandomBalancer struct {
+type WeightRandomPicker struct {
 	mu sync.RWMutex
 
 	list        []weightRandomNode
@@ -55,11 +55,11 @@ type WeightRandomBalancer struct {
 	totalWeight uint32
 }
 
-func (b *WeightRandomBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	b.mu.RLock()
-	list := b.list
-	totalWeight := b.totalWeight
-	b.mu.RUnlock()
+func (p *WeightRandomPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+	p.mu.RLock()
+	list := p.list
+	totalWeight := p.totalWeight
+	p.mu.RUnlock()
 
 	if len(list) == 0 || totalWeight == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
@@ -79,23 +79,23 @@ func (b *WeightRandomBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, e
 	panic("[weight-random-balancer] unreachable")
 }
 
-func (b *WeightRandomBalancer) syncReadySCs(readySCs map[string]weightRandomNode) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (p *WeightRandomPicker) syncReadySCs(readySCs map[string]weightRandomNode) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	for addr := range b.nodes {
+	for addr := range p.nodes {
 		if _, ok := readySCs[addr]; ok {
 			continue
 		}
-		delete(b.nodes, addr)
+		delete(p.nodes, addr)
 	}
-	maps.Copy(b.nodes, readySCs)
+	maps.Copy(p.nodes, readySCs)
 
-	b.totalWeight = 0
-	b.list = b.list[:0]
-	for _, node := range b.nodes {
-		b.totalWeight += node.weight
-		b.list = append(b.list, node)
+	p.totalWeight = 0
+	p.list = p.list[:0]
+	for _, node := range p.nodes {
+		p.totalWeight += node.weight
+		p.list = append(p.list, node)
 	}
 }
 

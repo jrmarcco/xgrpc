@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"maps"
@@ -9,20 +9,20 @@ import (
 	"google.golang.org/grpc/balancer/base"
 )
 
-var _ base.PickerBuilder = (*RoundRobinBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*roundRobinPickerBuilder)(nil)
 
-type RoundRobinBalancerBuilder struct {
+type roundRobinPickerBuilder struct {
 	mu sync.Mutex
 
-	picker *RoundRobinBalancer
+	picker *RoundRobinPicker
 }
 
-func (b *RoundRobinBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *roundRobinPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &RoundRobinBalancer{
+		b.picker = &RoundRobinPicker{
 			nodes: make(map[string]balancer.SubConn, len(info.ReadySCs)),
 		}
 	}
@@ -40,9 +40,9 @@ func (b *RoundRobinBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Pi
 	return b.picker
 }
 
-var _ balancer.Picker = (*RoundRobinBalancer)(nil)
+var _ balancer.Picker = (*RoundRobinPicker)(nil)
 
-type RoundRobinBalancer struct {
+type RoundRobinPicker struct {
 	mu sync.RWMutex
 
 	list  []balancer.SubConn
@@ -51,15 +51,15 @@ type RoundRobinBalancer struct {
 	index uint64
 }
 
-func (b *RoundRobinBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	b.mu.RLock()
-	list := b.list
-	b.mu.RUnlock()
+func (p *RoundRobinPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+	p.mu.RLock()
+	list := p.list
+	p.mu.RUnlock()
 
 	if len(list) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
-	index := atomic.AddUint64(&b.index, 1)
+	index := atomic.AddUint64(&p.index, 1)
 
 	// index - 1 是为了从 0 开始。
 	// 这里做不做 -1 没有什么实质性影响，不 -1 也只是第一个节点少参与一次轮询。
@@ -70,20 +70,20 @@ func (b *RoundRobinBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, err
 	}, nil
 }
 
-func (b *RoundRobinBalancer) syncReadySCs(readySCs map[string]balancer.SubConn) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (p *RoundRobinPicker) syncReadySCs(readySCs map[string]balancer.SubConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	for addr := range b.nodes {
+	for addr := range p.nodes {
 		if _, ok := readySCs[addr]; ok {
 			continue
 		}
-		delete(b.nodes, addr)
+		delete(p.nodes, addr)
 	}
-	maps.Copy(b.nodes, readySCs)
+	maps.Copy(p.nodes, readySCs)
 
-	b.list = b.list[:0]
-	for _, node := range b.nodes {
-		b.list = append(b.list, node)
+	p.list = p.list[:0]
+	for _, node := range p.nodes {
+		p.list = append(p.list, node)
 	}
 }

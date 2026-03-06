@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"context"
@@ -11,32 +11,32 @@ import (
 	"google.golang.org/grpc/balancer/base"
 )
 
-var _ base.PickerBuilder = (*WeightBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*weightPickerBuilder)(nil)
 
-type WeightBalancerBuilder struct {
+type weightPickerBuilder struct {
 	mu sync.Mutex
 
-	picker *WeightBalancer
+	picker *WeightPicker
 }
 
-func (b *WeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *weightPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &WeightBalancer{
-			nodes: make(map[string]*weightServiceNode, len(info.ReadySCs)),
+		b.picker = &WeightPicker{
+			nodes: make(map[string]*weightNode, len(info.ReadySCs)),
 		}
 	}
 
-	readySCs := make(map[string]*weightServiceNode, len(info.ReadySCs))
+	readySCs := make(map[string]*weightNode, len(info.ReadySCs))
 	for sc, scInfo := range info.ReadySCs {
 		addr := scInfo.Address.Addr
 		if addr == "" {
 			continue
 		}
 		weight, _ := scInfo.Address.Attributes.Value(client.AttrNameWeight).(uint32)
-		readySCs[addr] = &weightServiceNode{
+		readySCs[addr] = &weightNode{
 			sc:            sc,
 			weight:        weight,
 			currentWeight: weight,
@@ -47,26 +47,26 @@ func (b *WeightBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker
 	return b.picker
 }
 
-var _ balancer.Picker = (*WeightBalancer)(nil)
+var _ balancer.Picker = (*WeightPicker)(nil)
 
-type WeightBalancer struct {
+type WeightPicker struct {
 	mu sync.RWMutex
 
-	list  []*weightServiceNode
-	nodes map[string]*weightServiceNode
+	list  []*weightNode
+	nodes map[string]*weightNode
 }
 
-func (b *WeightBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	b.mu.RLock()
-	nodes := b.list
-	b.mu.RUnlock()
+func (p *WeightPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+	p.mu.RLock()
+	nodes := p.list
+	p.mu.RUnlock()
 
 	if len(nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
 	var totalWeight uint32
-	var selectedNode *weightServiceNode
+	var selectedNode *weightNode
 
 	for _, node := range nodes {
 		node.mu.Lock()
@@ -109,21 +109,21 @@ func (b *WeightBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) 
 	}, nil
 }
 
-func (b *WeightBalancer) syncReadySCs(readySCs map[string]*weightServiceNode) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (p *WeightPicker) syncReadySCs(readySCs map[string]*weightNode) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	for addr := range b.nodes {
+	for addr := range p.nodes {
 		if _, ok := readySCs[addr]; ok {
 			continue
 		}
-		delete(b.nodes, addr)
+		delete(p.nodes, addr)
 	}
 
 	for addr, nextNode := range readySCs {
-		oldNode, ok := b.nodes[addr]
+		oldNode, ok := p.nodes[addr]
 		if !ok {
-			b.nodes[addr] = nextNode
+			p.nodes[addr] = nextNode
 			continue
 		}
 
@@ -136,13 +136,13 @@ func (b *WeightBalancer) syncReadySCs(readySCs map[string]*weightServiceNode) {
 		oldNode.mu.Unlock()
 	}
 
-	b.list = b.list[:0]
-	for _, node := range b.nodes {
-		b.list = append(b.list, node)
+	p.list = p.list[:0]
+	for _, node := range p.nodes {
+		p.list = append(p.list, node)
 	}
 }
 
-type weightServiceNode struct {
+type weightNode struct {
 	mu sync.RWMutex
 
 	sc              balancer.SubConn

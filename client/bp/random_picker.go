@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"maps"
@@ -9,20 +9,20 @@ import (
 	"google.golang.org/grpc/balancer/base"
 )
 
-var _ base.PickerBuilder = (*RandomBalancerBuilder)(nil)
+var _ base.PickerBuilder = (*randomPickerBuilder)(nil)
 
-type RandomBalancerBuilder struct {
+type randomPickerBuilder struct {
 	mu sync.Mutex
 
-	picker *RandomBalancer
+	picker *RandomPicker
 }
 
-func (b *RandomBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+func (b *randomPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.picker == nil {
-		b.picker = &RandomBalancer{
+		b.picker = &RandomPicker{
 			nodes: make(map[string]balancer.SubConn, len(info.ReadySCs)),
 		}
 	}
@@ -40,46 +40,46 @@ func (b *RandomBalancerBuilder) Build(info base.PickerBuildInfo) balancer.Picker
 	return b.picker
 }
 
-var _ balancer.Picker = (*RandomBalancer)(nil)
+var _ balancer.Picker = (*RandomPicker)(nil)
 
-type RandomBalancer struct {
+type RandomPicker struct {
 	mu sync.RWMutex
 
 	list  []balancer.SubConn
 	nodes map[string]balancer.SubConn
 }
 
-func (b *RandomBalancer) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+func (p *RandomPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
-	if len(b.list) == 0 {
+	if len(p.list) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
 	//nolint:gosec // 这里使用 rand.IntN 是安全的。
-	index := rand.IntN(len(b.list))
+	index := rand.IntN(len(p.list))
 	return balancer.PickResult{
-		SubConn: b.list[index],
+		SubConn: p.list[index],
 		Done:    func(_ balancer.DoneInfo) {},
 	}, nil
 }
 
-func (b *RandomBalancer) syncReadySCs(readySCs map[string]balancer.SubConn) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (p *RandomPicker) syncReadySCs(readySCs map[string]balancer.SubConn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	for addr := range b.nodes {
+	for addr := range p.nodes {
 		if _, ok := readySCs[addr]; ok {
 			continue
 		}
-		delete(b.nodes, addr)
+		delete(p.nodes, addr)
 	}
 
-	maps.Copy(b.nodes, readySCs)
+	maps.Copy(p.nodes, readySCs)
 
-	b.list = make([]balancer.SubConn, 0, len(b.nodes))
-	for _, node := range b.nodes {
-		b.list = append(b.list, node)
+	p.list = make([]balancer.SubConn, 0, len(p.nodes))
+	for _, node := range p.nodes {
+		p.list = append(p.list, node)
 	}
 }

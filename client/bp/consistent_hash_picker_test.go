@@ -1,4 +1,4 @@
-package br
+package bp
 
 import (
 	"context"
@@ -42,12 +42,11 @@ func pickWithBizID(t *testing.T, p balancer.Picker, bizID uint64) balancer.SubCo
 func TestCHBalancerDynamicNodeSync(t *testing.T) {
 	t.Parallel()
 
-	builder := NewCHBalancerBuilder()
-	builder.VirtualNodeCnt(16)
+	builder := &consistentHashPickerBuilder{virtualNodeCnt: 16}
 
 	info, byAddr := buildInfoFromAddrs("10.0.0.1:8080", "10.0.0.2:8080")
 	picker := builder.Build(info)
-	ch, ok := picker.(*CHBalancer)
+	ch, ok := picker.(*ConsistentHashPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
@@ -79,25 +78,21 @@ func TestCHBalancerDynamicNodeSync(t *testing.T) {
 	_ = byAddr
 }
 
-func TestCHBalancerVirtualNodeCntFrozenAfterFirstBuild(t *testing.T) {
+func TestCHBalancerVirtualNodeCountConfig(t *testing.T) {
 	t.Parallel()
 
-	builder := NewCHBalancerBuilder()
-	builder.VirtualNodeCnt(8)
+	builder := &consistentHashPickerBuilder{virtualNodeCnt: 8}
 
 	info, _ := buildInfoFromAddrs("10.0.0.1:8080")
 	picker := builder.Build(info)
 
-	ch, ok := picker.(*CHBalancer)
+	ch, ok := picker.(*ConsistentHashPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
 	if ch.virtualNodeCnt != 8 {
 		t.Fatalf("expected virtual node cnt 8, got %d", ch.virtualNodeCnt)
 	}
-
-	// 首次 Build 后再修改应无效，保持环配置稳定。
-	builder.VirtualNodeCnt(64)
 
 	info2, _ := buildInfoFromAddrs("10.0.0.1:8080", "10.0.0.2:8080")
 	_ = builder.Build(info2)
@@ -113,12 +108,11 @@ func TestCHBalancerVirtualNodeCntFrozenAfterFirstBuild(t *testing.T) {
 func TestCHBalancerIgnoreEmptyAddress(t *testing.T) {
 	t.Parallel()
 
-	builder := NewCHBalancerBuilder()
-	builder.VirtualNodeCnt(4)
+	builder := &consistentHashPickerBuilder{virtualNodeCnt: 4}
 
 	info, byAddr := buildInfoFromAddrs("", "10.0.0.9:8080")
 	picker := builder.Build(info)
-	ch, ok := picker.(*CHBalancer)
+	ch, ok := picker.(*ConsistentHashPicker)
 	if !ok {
 		t.Fatalf("picker type mismatch")
 	}
