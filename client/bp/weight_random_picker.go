@@ -4,6 +4,7 @@ import (
 	"maps"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
@@ -50,24 +51,24 @@ var _ balancer.Picker = (*WeightRandomPicker)(nil)
 type WeightRandomPicker struct {
 	mu sync.RWMutex
 
+	nodes    map[string]weightRandomNode
+	snapshot atomic.Pointer[weightRandomSnapshot]
+}
+
+type weightRandomSnapshot struct {
 	list        []weightRandomNode
-	nodes       map[string]weightRandomNode
 	totalWeight uint32
 }
 
 func (p *WeightRandomPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	p.mu.RLock()
-	list := p.list
-	totalWeight := p.totalWeight
-	p.mu.RUnlock()
-
-	if len(list) == 0 || totalWeight == 0 {
+	snapshot := p.snapshot.Load()
+	if snapshot == nil || len(snapshot.list) == 0 || snapshot.totalWeight == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
 	//nolint:gosec // 这里使用 rand.IntN 是安全的。
-	target := rand.Intn(int(totalWeight))
-	for _, node := range list {
+	target := rand.Intn(int(snapshot.totalWeight))
+	for _, node := range snapshot.list {
 		target -= int(node.weight)
 		if target < 0 {
 			return balancer.PickResult{
@@ -91,12 +92,16 @@ func (p *WeightRandomPicker) syncReadySCs(readySCs map[string]weightRandomNode) 
 	}
 	maps.Copy(p.nodes, readySCs)
 
-	p.totalWeight = 0
-	p.list = p.list[:0]
+	var totalWeight uint32
+	list := make([]weightRandomNode, 0, len(p.nodes))
 	for _, node := range p.nodes {
-		p.totalWeight += node.weight
-		p.list = append(p.list, node)
+		totalWeight += node.weight
+		list = append(list, node)
 	}
+	p.snapshot.Store(&weightRandomSnapshot{
+		list:        list,
+		totalWeight: totalWeight,
+	})
 }
 
 type weightRandomNode struct {

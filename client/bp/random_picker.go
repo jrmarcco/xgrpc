@@ -4,6 +4,7 @@ import (
 	"maps"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
@@ -45,22 +46,24 @@ var _ balancer.Picker = (*RandomPicker)(nil)
 type RandomPicker struct {
 	mu sync.RWMutex
 
-	list  []balancer.SubConn
-	nodes map[string]balancer.SubConn
+	nodes    map[string]balancer.SubConn
+	snapshot atomic.Pointer[randomSnapshot]
+}
+
+type randomSnapshot struct {
+	list []balancer.SubConn
 }
 
 func (p *RandomPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if len(p.list) == 0 {
+	snapshot := p.snapshot.Load()
+	if snapshot == nil || len(snapshot.list) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
 	//nolint:gosec // 这里使用 rand.IntN 是安全的。
-	index := rand.IntN(len(p.list))
+	index := rand.IntN(len(snapshot.list))
 	return balancer.PickResult{
-		SubConn: p.list[index],
+		SubConn: snapshot.list[index],
 		Done:    func(_ balancer.DoneInfo) {},
 	}, nil
 }
@@ -78,8 +81,9 @@ func (p *RandomPicker) syncReadySCs(readySCs map[string]balancer.SubConn) {
 
 	maps.Copy(p.nodes, readySCs)
 
-	p.list = make([]balancer.SubConn, 0, len(p.nodes))
+	list := make([]balancer.SubConn, 0, len(p.nodes))
 	for _, node := range p.nodes {
-		p.list = append(p.list, node)
+		list = append(list, node)
 	}
+	p.snapshot.Store(&randomSnapshot{list: list})
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
@@ -52,23 +53,24 @@ var _ balancer.Picker = (*WeightPicker)(nil)
 type WeightPicker struct {
 	mu sync.RWMutex
 
-	list  []*weightNode
-	nodes map[string]*weightNode
+	nodes    map[string]*weightNode
+	snapshot atomic.Pointer[weightSnapshot]
+}
+
+type weightSnapshot struct {
+	nodes []*weightNode
 }
 
 func (p *WeightPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	p.mu.RLock()
-	nodes := p.list
-	p.mu.RUnlock()
-
-	if len(nodes) == 0 {
+	snapshot := p.snapshot.Load()
+	if snapshot == nil || len(snapshot.nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
 	var totalWeight uint32
 	var selectedNode *weightNode
 
-	for _, node := range nodes {
+	for _, node := range snapshot.nodes {
 		node.mu.Lock()
 		totalWeight += node.efficientWeight
 		node.currentWeight += node.efficientWeight
@@ -96,7 +98,7 @@ func (p *WeightPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
 			const twice = 2
 			if info.Err == nil {
 				selectedNode.efficientWeight++
-				selectedNode.efficientWeight = max(selectedNode.efficientWeight, selectedNode.weight*twice)
+				selectedNode.efficientWeight = min(selectedNode.efficientWeight, max(selectedNode.weight*twice, 1))
 				return
 			}
 
@@ -136,10 +138,11 @@ func (p *WeightPicker) syncReadySCs(readySCs map[string]*weightNode) {
 		oldNode.mu.Unlock()
 	}
 
-	p.list = p.list[:0]
+	list := make([]*weightNode, 0, len(p.nodes))
 	for _, node := range p.nodes {
-		p.list = append(p.list, node)
+		list = append(list, node)
 	}
+	p.snapshot.Store(&weightSnapshot{nodes: list})
 }
 
 type weightNode struct {

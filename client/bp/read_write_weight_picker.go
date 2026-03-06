@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 
-	"github.com/jrmarcco/jit/xslice"
 	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
@@ -64,55 +64,44 @@ var _ balancer.Picker = (*ReadWriteWeightPicker)(nil)
 type ReadWriteWeightPicker struct {
 	mu sync.RWMutex
 
-	list  []*readWriteWeightNode
 	nodes map[string]*readWriteWeightNode
+	snap  atomic.Pointer[readWriteWeightSnapshot]
+}
+
+type readWriteWeightSnapshot struct {
+	nodes []*readWriteWeightNode
 }
 
 func (p *ReadWriteWeightPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	p.mu.RLock()
-	nodes := p.list
-	p.mu.RUnlock()
-
-	if len(nodes) == 0 {
+	snapshot := p.snap.Load()
+	if snapshot == nil || len(snapshot.nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
-	// 获取候选节点。
+	// 获取请求上下文和筛选条件。
 	ctx := info.Ctx
 	group, hasGroup := client.ContextGroup(ctx)
-
-	var candidateNodes []*readWriteWeightNode
-	if !hasGroup {
-		// ctx 中没有 group 字段，不进行筛选，返回所有节点。
-		candidateNodes = nodes
-	} else {
-		// ctx 中有 group 字段，进行筛选。
-		candidateNodes = xslice.FilterMap(nodes, func(_ int, src *readWriteWeightNode) (*readWriteWeightNode, bool) {
-			src.mu.RLock()
-			nodeGroup := src.group
-			src.mu.RUnlock()
-
-			return src, group == nodeGroup
-		})
-	}
-
-	if len(candidateNodes) == 0 {
-		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
-	}
+	isWriteReq := p.isWriteReq(ctx)
 
 	var totalWeight uint32
 	var selectedNode *readWriteWeightNode
-
-	isWriteReq := p.isWriteReq(ctx)
+	var selectedWeight uint32
 
 	// 权重计算。
-	for _, node := range candidateNodes {
+	for _, node := range snapshot.nodes {
 		node.mu.Lock()
+		if hasGroup && group != node.group {
+			node.mu.Unlock()
+			continue
+		}
+
 		if isWriteReq {
 			totalWeight += node.efficientWriteWeight
 			node.currentWriteWeight += node.efficientWriteWeight
-			if selectedNode == nil || selectedNode.currentWriteWeight < node.currentWriteWeight {
+			currentWeight := node.currentWriteWeight
+			if selectedNode == nil || selectedWeight < currentWeight {
 				selectedNode = node
+				selectedWeight = currentWeight
 			}
 			node.mu.Unlock()
 			continue
@@ -120,8 +109,10 @@ func (p *ReadWriteWeightPicker) Pick(info balancer.PickInfo) (balancer.PickResul
 
 		totalWeight += node.efficientReadWeight
 		node.currentReadWeight += node.efficientReadWeight
-		if selectedNode == nil || selectedNode.currentReadWeight < node.currentReadWeight {
+		currentWeight := node.currentReadWeight
+		if selectedNode == nil || selectedWeight < currentWeight {
 			selectedNode = node
+			selectedWeight = currentWeight
 		}
 		node.mu.Unlock()
 	}
@@ -156,7 +147,7 @@ func (p *ReadWriteWeightPicker) recalculateWeight(isWriteReq bool, node *readWri
 	if isWriteReq {
 		if info.Err == nil {
 			node.efficientWriteWeight++
-			node.currentWriteWeight = max(node.efficientWriteWeight, node.writeWeight*twice)
+			node.efficientWriteWeight = min(node.efficientWriteWeight, max(node.writeWeight*twice, 1))
 			return
 		}
 		if isDecrementErr && node.efficientWriteWeight > 1 {
@@ -167,7 +158,7 @@ func (p *ReadWriteWeightPicker) recalculateWeight(isWriteReq bool, node *readWri
 
 	if info.Err == nil {
 		node.efficientReadWeight++
-		node.currentReadWeight = max(node.efficientReadWeight, node.readWeight*twice)
+		node.efficientReadWeight = min(node.efficientReadWeight, max(node.readWeight*twice, 1))
 		return
 	}
 
@@ -207,10 +198,11 @@ func (p *ReadWriteWeightPicker) syncReadySCs(readySCs map[string]*readWriteWeigh
 		p.nodes[nodeName] = nextNode
 	}
 
-	p.list = p.list[:0]
+	list := make([]*readWriteWeightNode, 0, len(p.nodes))
 	for _, node := range p.nodes {
-		p.list = append(p.list, node)
+		list = append(list, node)
 	}
+	p.snap.Store(&readWriteWeightSnapshot{nodes: list})
 }
 
 func (p *ReadWriteWeightPicker) isWriteReq(ctx context.Context) bool {

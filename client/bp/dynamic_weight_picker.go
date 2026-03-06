@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jrmarcco/xgrpc/client"
 	"google.golang.org/grpc/balancer"
@@ -59,16 +60,17 @@ var _ balancer.Picker = (*DynamicWeightPicker)(nil)
 type DynamicWeightPicker struct {
 	mu sync.RWMutex
 
-	nodes map[string]*dynamicNode
-	list  []*dynamicNode
+	nodes    map[string]*dynamicNode
+	snapshot atomic.Pointer[dynamicWeightSnapshot]
+}
+
+type dynamicWeightSnapshot struct {
+	nodes []*dynamicNode
 }
 
 func (p *DynamicWeightPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
-	p.mu.RLock()
-	nodes := append([]*dynamicNode(nil), p.list...)
-	p.mu.RUnlock()
-
-	if len(nodes) == 0 {
+	snapshot := p.snapshot.Load()
+	if snapshot == nil || len(snapshot.nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
 
@@ -77,7 +79,7 @@ func (p *DynamicWeightPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, er
 	var totalWeight int64
 
 	// 计算总权重。
-	for _, node := range nodes {
+	for _, node := range snapshot.nodes {
 		node.mu.Lock()
 		totalWeight += node.efficientWeight
 		node.currentWeight += node.efficientWeight
@@ -165,10 +167,11 @@ func (p *DynamicWeightPicker) syncReadySCs(readySCs map[string]*dynamicNode) {
 		oldNode.mu.Unlock()
 	}
 
-	p.list = p.list[:0]
+	list := make([]*dynamicNode, 0, len(p.nodes))
 	for _, node := range p.nodes {
-		p.list = append(p.list, node)
+		list = append(list, node)
 	}
+	p.snapshot.Store(&dynamicWeightSnapshot{nodes: list})
 }
 
 type dynamicNode struct {

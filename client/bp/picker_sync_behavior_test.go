@@ -152,12 +152,10 @@ func TestWeightBalancerBuilderSync(t *testing.T) {
 		}
 	}
 
-	weightPicker.mu.RLock()
-	if len(weightPicker.list) != 1 {
-		weightPicker.mu.RUnlock()
+	weightSnapshot := weightPicker.snapshot.Load()
+	if weightSnapshot == nil || len(weightSnapshot.nodes) != 1 {
 		t.Fatalf("expected one weighted node after sync")
 	}
-	weightPicker.mu.RUnlock()
 }
 
 func TestRoundRobinBalancerBuilderSync(t *testing.T) {
@@ -189,12 +187,10 @@ func TestRoundRobinBalancerBuilderSync(t *testing.T) {
 		}
 	}
 
-	picker.mu.RLock()
-	if len(picker.list) != 1 {
-		picker.mu.RUnlock()
+	rrSnapshot := picker.snapshot.Load()
+	if rrSnapshot == nil || len(rrSnapshot.list) != 1 {
 		t.Fatalf("expected one node in round robin list")
 	}
-	picker.mu.RUnlock()
 }
 
 func TestWeightRandomBalancerBuilderSync(t *testing.T) {
@@ -229,12 +225,10 @@ func TestWeightRandomBalancerBuilderSync(t *testing.T) {
 		}
 	}
 
-	picker.mu.RLock()
-	if len(picker.list) != 1 {
-		picker.mu.RUnlock()
+	weightRandomSnapshot := picker.snapshot.Load()
+	if weightRandomSnapshot == nil || len(weightRandomSnapshot.list) != 1 {
 		t.Fatalf("expected one node in weighted-random list")
 	}
-	picker.mu.RUnlock()
 }
 
 func TestDynamicWeightBalancerBuilderSync(t *testing.T) {
@@ -269,12 +263,10 @@ func TestDynamicWeightBalancerBuilderSync(t *testing.T) {
 		}
 	}
 
-	picker.mu.RLock()
-	if len(picker.list) != 1 {
-		picker.mu.RUnlock()
+	dwSnapshot := picker.snapshot.Load()
+	if dwSnapshot == nil || len(dwSnapshot.nodes) != 1 {
 		t.Fatalf("expected one node in dynamic-weight list")
 	}
-	picker.mu.RUnlock()
 }
 
 func TestRwWeightBalancerBuilderSync(t *testing.T) {
@@ -309,10 +301,8 @@ func TestRwWeightBalancerBuilderSync(t *testing.T) {
 		}
 	}
 
-	picker.mu.RLock()
-	if len(picker.list) != 1 {
-		picker.mu.RUnlock()
+	rwSnapshot := picker.snap.Load()
+	if rwSnapshot == nil || len(rwSnapshot.nodes) != 1 {
 		t.Fatalf("expected one node in rw-weight list")
 	}
-	picker.mu.RUnlock()
 }
