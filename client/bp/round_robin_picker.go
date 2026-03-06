@@ -46,7 +46,7 @@ type RoundRobinPicker struct {
 	mu sync.RWMutex
 
 	nodes    map[string]balancer.SubConn
-	snapshot atomic.Pointer[roundRobinSnapshot]
+	snapshot atomic.Pointer[roundRobinSnapshot] // 快照 ( 用于 Pick 时避免并发访问 )
 
 	index uint64
 }

@@ -301,7 +301,7 @@ func TestRwWeightBalancerBuilderSync(t *testing.T) {
 		}
 	}
 
-	rwSnapshot := picker.snap.Load()
+	rwSnapshot := picker.snapshot.Load()
 	if rwSnapshot == nil || len(rwSnapshot.nodes) != 1 {
 		t.Fatalf("expected one node in rw-weight list")
 	}

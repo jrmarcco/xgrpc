@@ -47,7 +47,7 @@ type RandomPicker struct {
 	mu sync.RWMutex
 
 	nodes    map[string]balancer.SubConn
-	snapshot atomic.Pointer[randomSnapshot]
+	snapshot atomic.Pointer[randomSnapshot] // 快照 ( 用于 Pick 时避免并发访问 )
 }
 
 type randomSnapshot struct {

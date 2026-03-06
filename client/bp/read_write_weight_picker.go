@@ -64,8 +64,8 @@ var _ balancer.Picker = (*ReadWriteWeightPicker)(nil)
 type ReadWriteWeightPicker struct {
 	mu sync.RWMutex
 
-	nodes map[string]*readWriteWeightNode
-	snap  atomic.Pointer[readWriteWeightSnapshot]
+	nodes    map[string]*readWriteWeightNode
+	snapshot atomic.Pointer[readWriteWeightSnapshot] // 快照 ( 用于 Pick 时避免并发访问 )
 }
 
 type readWriteWeightSnapshot struct {
@@ -73,7 +73,7 @@ type readWriteWeightSnapshot struct {
 }
 
 func (p *ReadWriteWeightPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
-	snapshot := p.snap.Load()
+	snapshot := p.snapshot.Load()
 	if snapshot == nil || len(snapshot.nodes) == 0 {
 		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
 	}
@@ -202,7 +202,7 @@ func (p *ReadWriteWeightPicker) syncReadySCs(readySCs map[string]*readWriteWeigh
 	for _, node := range p.nodes {
 		list = append(list, node)
 	}
-	p.snap.Store(&readWriteWeightSnapshot{nodes: list})
+	p.snapshot.Store(&readWriteWeightSnapshot{nodes: list})
 }
 
 func (p *ReadWriteWeightPicker) isWriteReq(ctx context.Context) bool {

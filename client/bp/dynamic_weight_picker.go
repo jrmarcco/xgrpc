@@ -61,7 +61,7 @@ type DynamicWeightPicker struct {
 	mu sync.RWMutex
 
 	nodes    map[string]*dynamicNode
-	snapshot atomic.Pointer[dynamicWeightSnapshot]
+	snapshot atomic.Pointer[dynamicWeightSnapshot] // 快照 ( 用于 Pick 时避免并发访问 )
 }
 
 type dynamicWeightSnapshot struct {

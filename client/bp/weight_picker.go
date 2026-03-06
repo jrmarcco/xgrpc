@@ -54,7 +54,7 @@ type WeightPicker struct {
 	mu sync.RWMutex
 
 	nodes    map[string]*weightNode
-	snapshot atomic.Pointer[weightSnapshot]
+	snapshot atomic.Pointer[weightSnapshot] // 快照 ( 用于 Pick 时避免并发访问 )
 }
 
 type weightSnapshot struct {
