@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -euo pipefail
 
 # tools for vscode go extension
 echo "🚀 install & update gopls ..."

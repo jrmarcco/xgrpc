@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+set -euo pipefail
 
 SOURCE_COMMIT=./scripts/git/pre-commit
 TARGET_COMMIT=.git/hooks/pre-commit
