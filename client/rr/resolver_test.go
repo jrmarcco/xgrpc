@@ -208,6 +208,7 @@ func TestResolverResolve_CloseSuppressesCanceledError(t *testing.T) {
 	cc := &fakeClientConn{}
 
 	watchCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	r := &Resolver{
 		registry:    registry,
 		timeout:     time.Second,

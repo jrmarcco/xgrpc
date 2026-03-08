@@ -64,6 +64,7 @@ func (b *ResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, 
 	}
 
 	watchCtx, watchCancel := context.WithCancel(context.Background())
+	defer watchCancel()
 	r := &Resolver{
 		registry: b.registry,
 		timeout:  b.timeout,
