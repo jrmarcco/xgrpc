@@ -58,6 +58,8 @@ func NewBuilder(etcdClient *clientv3.Client) *Builder {
 }
 
 // LeaseTTL 设置租约 ttl ( 单位为秒 )。
+// 这里不适用 time.Duration 是为了与 etcd 的 lease TTL 单位保持一致。
+// 避免使用者传入 time.Duration 时需要手动转换单位导致转换错误/不准确。
 func (b *Builder) LeaseTTL(ttl int) *Builder {
 	b.leaseTTL = ttl
 	return b
