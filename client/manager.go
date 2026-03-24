@@ -19,11 +19,12 @@ import (
 )
 
 var (
-	ErrManagerClosed             = errors.New("client manager is closed")
-	ErrResolverBuilderRequired   = errors.New("resolver builder is required")
-	ErrClientCreatorRequired     = errors.New("client creator is required")
-	ErrTransportSecurityRequired = errors.New("transport security is required")
-	ErrInvalidConnectTimeout     = errors.New("connect timeout must be >= 0")
+	ErrManagerClosed               = errors.New("client manager is closed")
+	ErrResolverBuilderRequired     = errors.New("resolver builder is required")
+	ErrClientCreatorRequired       = errors.New("client creator is required")
+	ErrTransportSecurityRequired   = errors.New("transport security is required")
+	ErrServiceInstanceAddrRequired = errors.New("service instance address is required")
+	ErrInvalidConnectTimeout       = errors.New("connect timeout must be >= 0")
 )
 
 // ManagerBuilder 是 gRPC 客户端管理器 builder。
@@ -250,6 +251,93 @@ func (m *Manager[T]) dial(serviceName string) (*grpc.ClientConn, error) {
 	return cc, nil
 }
 
+// GetByAddr 获取指定服务实例地址的客户端。
+func (m *Manager[T]) GetByAddr(serviceName, addr string) (T, error) {
+	if m.closed.Load() {
+		var zero T
+		return zero, fmt.Errorf("[client-manager] %w", ErrManagerClosed)
+	}
+
+	if err := m.configErr; err != nil {
+		var zero T
+		return zero, err
+	}
+
+	if addr == "" {
+		var zero T
+		return zero, fmt.Errorf("[client-manager] %w", ErrServiceInstanceAddrRequired)
+	}
+
+	key := addrCacheKey(serviceName, addr)
+	if entry, loaded := m.clients.Load(key); loaded {
+		return entry.client, nil
+	}
+
+	client, err, _ := m.sg.Do(key, func() (any, error) {
+		cc, err := m.dialAddr(serviceName, addr)
+		if err != nil {
+			return nil, fmt.Errorf("[client-manager] failed to create grpc client connection for service instance %s(%s): %w", serviceName, addr, err)
+		}
+		if m.closed.Load() {
+			_ = cc.Close()
+			return nil, fmt.Errorf("[client-manager] %w", ErrManagerClosed)
+		}
+
+		client := m.creator(cc)
+		entry := &clientEntry[T]{
+			client: client,
+			cc:     cc,
+		}
+
+		m.clients.Store(key, entry)
+		return entry, nil
+	})
+
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+
+	entry, ok := client.(*clientEntry[T])
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("[client-manager] failed to convert cached entry to expected type")
+	}
+
+	return entry.client, nil
+}
+
+// dialAddr 拨号连接指定地址。
+func (m *Manager[T]) dialAddr(serviceName, addr string) (*grpc.ClientConn, error) {
+	opts := []grpc.DialOption{
+		grpc.WithNoProxy(),
+		grpc.WithKeepaliveParams(m.keepaliveParams),
+	}
+
+	if m.transportCreds != nil {
+		opts = append(opts, grpc.WithTransportCredentials(m.transportCreds))
+	} else if m.insecure {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	if len(m.dialOptions) > 0 {
+		opts = append(opts, m.dialOptions...)
+	}
+
+	cc, err := grpc.NewClient(addr, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	if m.connectTimeout > 0 {
+		if err := waitForReady(cc, m.connectTimeout); err != nil {
+			_ = cc.Close()
+			return nil, fmt.Errorf("[client-manager] failed to connect to service instance %s(%s) within %s: %w", serviceName, addr, m.connectTimeout, err)
+		}
+	}
+	return cc, nil
+}
+
 func (m *Manager[T]) validateConfig() error {
 	if m.rb == nil {
 		return fmt.Errorf("[client-manager] %w", ErrResolverBuilderRequired)
@@ -279,6 +367,27 @@ func (m *Manager[T]) Close(serviceName string) error {
 	}
 
 	return nil
+}
+
+// CloseByAddr 关闭指定服务实例连接。
+func (m *Manager[T]) CloseByAddr(serviceName, addr string) error {
+	if addr == "" {
+		return nil
+	}
+
+	entry, ok := m.clients.LoadAndDelete(addrCacheKey(serviceName, addr))
+	if !ok {
+		return nil
+	}
+
+	if entry.cc != nil {
+		return entry.cc.Close()
+	}
+	return nil
+}
+
+func addrCacheKey(serviceName, addr string) string {
+	return fmt.Sprintf("instance:%s@%s", serviceName, addr)
 }
 
 // CloseAll 关闭所有连接。

@@ -37,7 +37,7 @@ type ContextSubscriber interface {
 // ServiceInstance 是服务实例。
 type ServiceInstance struct {
 	Name        string // 服务名
-	Addr        string // 服务地址
+	Addr        string // 服务地址 ( ip:port / hostname:port / [ipv6]:port )
 	Group       string // 服务组信息 ( 可选 )
 	ReadWeight  uint32 // 读权重
 	WriteWeight uint32 // 写权重

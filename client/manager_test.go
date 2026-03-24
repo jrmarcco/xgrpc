@@ -285,3 +285,97 @@ func TestManager_Get_NegativeConnectTimeout_ErrorSentinel(t *testing.T) {
 		t.Fatalf("expected ErrInvalidConnectTimeout, got: %v", err)
 	}
 }
+
+func TestManager_GetByServiceInstance_CacheByInstance(t *testing.T) {
+	t.Parallel()
+
+	var creatorCalls atomic.Int32
+	m := NewManagerBuilder(
+		noopResolverBuilder{},
+		nil,
+		func(conn *grpc.ClientConn) *grpc.ClientConn {
+			creatorCalls.Add(1)
+			return conn
+		},
+	).Insecure().Build()
+
+	first, err := m.GetByAddr("svc-a", "127.0.0.1:18080")
+	if err != nil {
+		t.Fatalf("first GetByServiceInstance failed: %v", err)
+	}
+	second, err := m.GetByAddr("svc-a", "127.0.0.1:18080")
+	if err != nil {
+		t.Fatalf("second GetByServiceInstance failed: %v", err)
+	}
+
+	if creatorCalls.Load() != 1 {
+		t.Fatalf("creator should be called once, got %d", creatorCalls.Load())
+	}
+	if first != second {
+		t.Fatalf("expected cached client pointer for same service instance")
+	}
+}
+
+func TestManager_GetByServiceInstance_EmptyAddr_ErrorSentinel(t *testing.T) {
+	t.Parallel()
+
+	m := NewManagerBuilder(
+		noopResolverBuilder{},
+		nil,
+		func(conn *grpc.ClientConn) *grpc.ClientConn { return conn },
+	).Insecure().Build()
+
+	_, err := m.GetByAddr("svc-a", "")
+	if !errors.Is(err, ErrServiceInstanceAddrRequired) {
+		t.Fatalf("expected ErrServiceInstanceAddrEmpty, got: %v", err)
+	}
+}
+
+func TestManager_CloseByServiceInstance_ThenRecreate(t *testing.T) {
+	t.Parallel()
+
+	var creatorCalls atomic.Int32
+	m := NewManagerBuilder(
+		noopResolverBuilder{},
+		nil,
+		func(conn *grpc.ClientConn) *grpc.ClientConn {
+			creatorCalls.Add(1)
+			return conn
+		},
+	).Insecure().Build()
+
+	first, err := m.GetByAddr("svc-a", "127.0.0.1:18080")
+	if err != nil {
+		t.Fatalf("first GetByServiceInstance failed: %v", err)
+	}
+
+	if err = m.CloseByAddr("svc-a", "127.0.0.1:18080"); err != nil {
+		t.Fatalf("CloseByServiceInstance failed: %v", err)
+	}
+
+	second, err := m.GetByAddr("svc-a", "127.0.0.1:18080")
+	if err != nil {
+		t.Fatalf("second GetByServiceInstance failed: %v", err)
+	}
+
+	if creatorCalls.Load() != 2 {
+		t.Fatalf("creator should be called twice, got %d", creatorCalls.Load())
+	}
+	if first == second {
+		t.Fatalf("expected recreated client connection after CloseByServiceInstance")
+	}
+}
+
+func TestManager_CloseByServiceInstance_EmptyAddr_Noop(t *testing.T) {
+	t.Parallel()
+
+	m := NewManagerBuilder(
+		noopResolverBuilder{},
+		nil,
+		func(conn *grpc.ClientConn) *grpc.ClientConn { return conn },
+	).Insecure().Build()
+
+	if err := m.CloseByAddr("svc-a", ""); err != nil {
+		t.Fatalf("expected empty-addr close to be noop, got: %v", err)
+	}
+}
