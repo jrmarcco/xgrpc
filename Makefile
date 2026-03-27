@@ -25,3 +25,7 @@ check:
 .PHONY: lint
 lint:
 	@golangci-lint run -c ./scripts/lint/.golangci.yaml ./...
+
+.PHONY: test
+test:
+	@go test -v -cover ./...
