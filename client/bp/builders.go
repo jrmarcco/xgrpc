@@ -3,7 +3,7 @@ package bp
 import (
 	"fmt"
 
-	"github.com/jrmarcco/jit/bean/option"
+	"github.com/jrmarcco/jit/xbean/option"
 	"google.golang.org/grpc/balancer"
 	"google.golang.org/grpc/balancer/base"
 )
