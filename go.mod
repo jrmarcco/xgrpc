@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/jrmarcco/jit v0.0.5
+	github.com/jrmarcco/jit v0.0.6
 	go.etcd.io/etcd/client/v3 v3.6.10
 	golang.org/x/sync v0.20.0
 	google.golang.org/grpc v1.80.0
