@@ -102,7 +102,7 @@ func (p *ConsistentHashPicker) addNodeLocked(sc balancer.SubConn, addr string) {
 }
 
 func (p *ConsistentHashPicker) sortRingLocked() {
-	// 索引切片 ( 用于排序)。
+	// 索引切片 ( 用于排序 )。
 	indices := make([]int, len(p.ring))
 	for i := range indices {
 		indices[i] = i
